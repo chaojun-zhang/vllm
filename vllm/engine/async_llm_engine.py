@@ -337,8 +337,12 @@ class AsyncLLMEngine:
                                       "async engine yet.")
         elif engine_config.parallel_config.worker_use_ray:
             initialize_ray_cluster(engine_config.parallel_config)
-            from vllm.executor.ray_gpu_executor import RayGPUExecutorAsync
-            executor_class = RayGPUExecutorAsync
+            if engine_config.device_config.device_type == "cpu":
+                from vllm.executor.ray_cpu_executor import RayCPUExecutorAsync
+                executor_class = RayCPUExecutorAsync
+            else:
+                from vllm.executor.ray_gpu_executor import RayGPUExecutorAsync
+                executor_class = RayGPUExecutorAsync
         else:
             assert engine_config.parallel_config.world_size == 1, (
                 "Ray is required if parallel_config.world_size > 1.")
