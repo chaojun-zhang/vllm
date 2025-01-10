@@ -1452,6 +1452,7 @@ class EngineArgs:
             "FLASHMLA",
             "FLASHINFER",
             "FLASHINFER_VLLM_V1",
+            "IPEX_V1",
         ]
         if (envs.is_set("VLLM_ATTENTION_BACKEND")
                 and envs.VLLM_ATTENTION_BACKEND not in V1_BACKENDS):
