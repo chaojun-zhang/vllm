@@ -5,14 +5,15 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import torch
-import triton
-import triton.language as tl
+from vllm.platforms import current_platform
+if not current_platform.is_xpu():
+    import triton
+    import triton.language as tl
 
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
 from vllm.attention.backends.utils import get_flash_attn_version
 from vllm.logger import init_logger
-from vllm.platforms import current_platform
 from vllm.utils import cdiv
 
 if current_platform.is_cuda():
@@ -398,7 +399,7 @@ def merge_attn_states(
         padded_head_size,
     )
 
-
+'''
 @triton.jit
 def merge_attn_states_kernel(
     output,  # [NUM_TOKENS, NUM_HEADS, HEAD_SIZE]
@@ -439,3 +440,4 @@ def merge_attn_states_kernel(
              head_idx * HEAD_SIZE + head_arange,
              out,
              mask=head_mask)
+'''
