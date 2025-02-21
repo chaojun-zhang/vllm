@@ -120,10 +120,6 @@ class IPEXAttentionImpl(AttentionImpl):
             # Profiling run.
             return output
 
-        # NOTE(woosuk): IPEXAttention does not support FP8 KV cache.
-        assert layer._k_scale == 1.0 and layer._v_scale == 1.0, (
-            "key/v_scale is not supported in IPEXAttention.")
-
         num_actual_tokens = attn_metadata.num_actual_tokens
         num_heads = self.num_heads
         head_size = self.head_size
