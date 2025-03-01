@@ -160,7 +160,7 @@
         <mxCell id="-815vCcFMifysQOW950K-5" value="Schedular" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="-60" y="600" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="-815vCcFMifysQOW950K-6" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="-815vCcFMifysQOW950K-3" target="-815vCcFMifysQOW950K-4">
+        <mxCell id="-815vCcFMifysQOW950K-6" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;" edge="1" parent="1" source="-815vCcFMifysQOW950K-3" target="-815vCcFMifysQOW950K-4">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="160" y="480" as="sourcePoint" />
             <mxPoint x="210" y="430" as="targetPoint" />
@@ -180,7 +180,7 @@
             <mxPoint x="100" y="460" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="-815vCcFMifysQOW950K-31" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="-815vCcFMifysQOW950K-4" target="-815vCcFMifysQOW950K-7">
+        <mxCell id="-815vCcFMifysQOW950K-31" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;" edge="1" parent="1" source="-815vCcFMifysQOW950K-4" target="-815vCcFMifysQOW950K-7">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="490" y="550" as="sourcePoint" />
             <mxPoint x="540" y="500" as="targetPoint" />
@@ -200,7 +200,7 @@
         <mxCell id="-815vCcFMifysQOW950K-21" value="N x" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="-815vCcFMifysQOW950K-32">
           <mxGeometry x="30" width="60" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="-815vCcFMifysQOW950K-34" value="schedule_output" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="-815vCcFMifysQOW950K-5" target="-815vCcFMifysQOW950K-4">
+        <mxCell id="-815vCcFMifysQOW950K-34" value="schedule_output" style="endArrow=classic;html=1;rounded=0;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="-815vCcFMifysQOW950K-5" target="-815vCcFMifysQOW950K-4">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="110" y="640" as="sourcePoint" />
             <mxPoint x="160" y="590" as="targetPoint" />
