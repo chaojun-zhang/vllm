@@ -256,7 +256,7 @@
       </root>
     </mxGraphModel>
   </diagram>
-  <diagram name="EngineCoreProc" id="TIBVJPE8Si_duUqUehif">
+  <diagram name="MasterNode" id="TIBVJPE8Si_duUqUehif">
     <mxGraphModel dx="1289" dy="862" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
@@ -347,10 +347,10 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-25" value="&lt;div&gt;1. Scheduler.add_request&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="775" y="207" width="155" height="20" as="geometry" />
+          <mxGeometry x="777" y="207" width="153" height="20" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-52" value="3. Executor.execute_model" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="777.5" y="274" width="150" height="20" as="geometry" />
+          <mxGeometry x="776.5" y="274" width="153.5" height="20" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-61" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="7ink04Z4ypVSVNiH0Vlm-25" target="7ink04Z4ypVSVNiH0Vlm-52">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
@@ -399,7 +399,7 @@
           <mxGeometry x="760" y="360" width="200" height="60" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-81" value="&lt;div&gt;2. Scheduler.schedule&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="775" y="239.5" width="150" height="20" as="geometry" />
+          <mxGeometry x="777" y="239.5" width="153" height="20" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-84" value="" style="edgeStyle=segmentEdgeStyle;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;fillColor=#fff2cc;strokeColor=#d6b656;" edge="1" parent="1" source="7ink04Z4ypVSVNiH0Vlm-25" target="dEV01hvlml-2Ilz_1A4S-10">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
@@ -414,13 +414,7 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-89" value="KVCacheManager" style="rounded=0;whiteSpace=wrap;html=1;strokeWidth=2;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="1270" y="160" width="120" height="80" as="geometry" />
-        </mxCell>
-        <mxCell id="7ink04Z4ypVSVNiH0Vlm-90" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.25;exitDx=0;exitDy=0;" edge="1" parent="1" source="dEV01hvlml-2Ilz_1A4S-10" target="7ink04Z4ypVSVNiH0Vlm-89">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="1340" y="280" as="sourcePoint" />
-            <mxPoint x="1390" y="230" as="targetPoint" />
-          </mxGeometry>
+          <mxGeometry x="1270" y="160" width="120" height="160" as="geometry" />
         </mxCell>
         <mxCell id="7ink04Z4ypVSVNiH0Vlm-92" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="W4vV7Lv-sqLCQdmP-li5-29" target="W4vV7Lv-sqLCQdmP-li5-29">
           <mxGeometry relative="1" as="geometry" />
@@ -447,15 +441,32 @@
             <mxPoint y="1" as="offset" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="7ink04Z4ypVSVNiH0Vlm-99" value="KVCacheBlock" style="rounded=0;whiteSpace=wrap;html=1;strokeWidth=2;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="1270" y="267" width="120" height="53" as="geometry" />
+        <mxCell id="LSQgjN9iPX9e3Sujapoq-1" value="&lt;div&gt;allocate_slots(prefill)&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1047.5" y="267" width="155" height="20" as="geometry" />
         </mxCell>
-        <mxCell id="7ink04Z4ypVSVNiH0Vlm-100" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="7ink04Z4ypVSVNiH0Vlm-89" target="7ink04Z4ypVSVNiH0Vlm-99">
+        <mxCell id="LSQgjN9iPX9e3Sujapoq-2" value="&lt;div&gt;append_slots(decode)&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1047.5" y="294" width="155" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="LSQgjN9iPX9e3Sujapoq-4" value="" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="LSQgjN9iPX9e3Sujapoq-1" target="7ink04Z4ypVSVNiH0Vlm-89">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="1240" y="250" as="sourcePoint" />
-            <mxPoint x="1280" y="232" as="targetPoint" />
+            <mxPoint x="1290" y="460" as="sourcePoint" />
+            <mxPoint x="1340" y="410" as="targetPoint" />
           </mxGeometry>
         </mxCell>
+        <mxCell id="LSQgjN9iPX9e3Sujapoq-5" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.017;entryY=0.909;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="LSQgjN9iPX9e3Sujapoq-2" target="7ink04Z4ypVSVNiH0Vlm-89">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="1213" y="289" as="sourcePoint" />
+            <mxPoint x="1280" y="290" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="s9Lg1JfD9EUz8NIktaL7" name="WorkerNode">
+    <mxGraphModel dx="1289" dy="862" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
       </root>
     </mxGraphModel>
   </diagram>
@@ -475,14 +486,6 @@
         <mxCell id="zo-2ny9y-x9IaGhEG9BQ-1" value="" style="whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="330" y="360" width="120" height="60" as="geometry" />
         </mxCell>
-      </root>
-    </mxGraphModel>
-  </diagram>
-  <diagram id="s9Lg1JfD9EUz8NIktaL7" name="Worker">
-    <mxGraphModel dx="852" dy="751" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
       </root>
     </mxGraphModel>
   </diagram>
