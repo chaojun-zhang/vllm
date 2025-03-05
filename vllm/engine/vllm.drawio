@@ -490,10 +490,10 @@
             <mxPoint as="offset" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="unKgtpqV4J96o30UDFeu-12" value="determine_available_memory" style="html=1;verticalAlign=bottom;startArrow=oval;endArrow=block;startSize=8;curved=0;rounded=0;" edge="1" parent="1" source="unKgtpqV4J96o30UDFeu-8" target="unKgtpqV4J96o30UDFeu-11">
-          <mxGeometry x="0.7021" y="8" relative="1" as="geometry">
-            <mxPoint x="1323" y="632" as="sourcePoint" />
-            <mxPoint x="1464" y="632" as="targetPoint" />
+        <mxCell id="unKgtpqV4J96o30UDFeu-12" value="determine_available_memory" style="html=1;verticalAlign=bottom;startArrow=oval;endArrow=block;startSize=8;curved=0;rounded=0;" edge="1" parent="1">
+          <mxGeometry x="0.2199" y="18" relative="1" as="geometry">
+            <mxPoint x="1328" y="634" as="sourcePoint" />
+            <mxPoint x="1469" y="634" as="targetPoint" />
             <mxPoint as="offset" />
           </mxGeometry>
         </mxCell>
