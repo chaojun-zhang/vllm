@@ -1,6 +1,6 @@
 <mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36" version="26.0.16" pages="9">
   <diagram id="apeP23jsynFM3OqLDiB0" name="Overview">
-    <mxGraphModel dx="2172" dy="2031" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1805" dy="1954" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -25,10 +25,10 @@
             <mxPoint x="-190" y="150" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="DFlWInDrFq28ID34mn4g-8" value="Main Processor" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;strokeWidth=3;fillColor=default;fontSize=18;" parent="1" vertex="1">
+        <mxCell id="DFlWInDrFq28ID34mn4g-8" value="Engine Client" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;strokeWidth=3;fillColor=default;fontSize=18;" parent="1" vertex="1">
           <mxGeometry x="-730" y="70" width="130" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="DFlWInDrFq28ID34mn4g-9" value="EngineCore Processor" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;" parent="1" vertex="1">
+        <mxCell id="DFlWInDrFq28ID34mn4g-9" value="Engine Processor" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;" parent="1" vertex="1">
           <mxGeometry x="-270" y="70" width="200" height="30" as="geometry" />
         </mxCell>
         <mxCell id="JMfvgWeIkwW7J8G9IK3E-10" value="" style="endArrow=classic;html=1;rounded=0;fillColor=#d5e8d4;strokeColor=light-dark(#040a00, #446e2c);strokeWidth=2;" parent="1" source="-815vCcFMifysQOW950K-4" target="-815vCcFMifysQOW950K-5" edge="1">
