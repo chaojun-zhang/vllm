@@ -2009,13 +2009,13 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="HWkJzAM3ItMbdXh2sgAB-3" value="VLLM_DECODE_BS_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_DECODE_BS_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp;VLLM_DECODE_BS_BUCKET_MAX&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;VLLM_DECODE_BLOCK_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; VLLM_DECODE_BLOCK_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; VLLM_DECODE_BLOCK_BUCKET_MAX&lt;/div&gt;&lt;/div&gt;" style="shape=note;strokeWidth=2;fontSize=14;size=20;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="730" y="875" width="320" height="140" as="geometry" />
+          <mxGeometry x="722.5" y="900" width="320" height="140" as="geometry" />
         </mxCell>
         <mxCell id="HWkJzAM3ItMbdXh2sgAB-1" value="VLLM_PROMPT_BS_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_PROMPT_BS_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp;VLLM_PROMPT_BS_BUCKET_MAX&lt;/div&gt;&lt;div&gt;&amp;nbsp; VLLM_PROMPT_SEQ_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;VLLM_PROMPT_SEQ_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_PROMPT_SEQ_BUCKET_MAX&lt;/div&gt;&lt;/div&gt;" style="shape=note;strokeWidth=2;fontSize=14;size=20;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#666600;" vertex="1" parent="1">
           <mxGeometry x="715" y="650" width="335" height="160" as="geometry" />
         </mxCell>
         <mxCell id="dPd7M0vu7mvb35IAzC7L-2" value="system can warmup with available memory for config prompt/decode buckets" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="-310" y="780" width="310" height="130" as="geometry" />
+          <mxGeometry x="-360" y="700" width="310" height="130" as="geometry" />
         </mxCell>
         <mxCell id="dPd7M0vu7mvb35IAzC7L-3" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="dPd7M0vu7mvb35IAzC7L-2">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
