@@ -1,4 +1,4 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36" version="26.0.16" pages="10">
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36" version="26.0.16" pages="11">
   <diagram id="apeP23jsynFM3OqLDiB0" name="Overview">
     <mxGraphModel dx="1805" dy="1954" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
@@ -1433,8 +1433,8 @@
       </root>
     </mxGraphModel>
   </diagram>
-  <diagram id="nJmGsad2fYNuxdY_kRqu" name="hpu.warmup_model">
-    <mxGraphModel dx="1916" dy="896" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+  <diagram id="nJmGsad2fYNuxdY_kRqu" name="hpu.warmup_buckets">
+    <mxGraphModel dx="1748" dy="785" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -1633,7 +1633,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="eC6GRfQStdiSqi6-Pl0b" name="hpu.warmup_scenario">
-    <mxGraphModel dx="1089" dy="896" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="921" dy="785" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -1966,6 +1966,89 @@
         </mxCell>
         <mxCell id="kpdDlsnxGWZOkfzflDfw-93" value="&lt;div style=&quot;background-color:#ffffff;color:#080808&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;RMSNorm&lt;/pre&gt;&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;" parent="1" vertex="1">
           <mxGeometry x="680" y="1620" width="200" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="1gPuDbh6v8oEdwBCJHZg" name="hpu.warmup_usecases">
+    <mxGraphModel dx="1748" dy="785" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="R6MZ_0kp74Mru3hihZvr-3" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-size: 11px; text-wrap-mode: nowrap; background-color: rgb(255, 255, 255);&quot;&gt;VLLM_PT_PROFILE=&#39;prompt_{bs}_{seq_len}_t&#39;&lt;/span&gt;" style="shape=note;strokeWidth=2;fontSize=14;size=20;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#666600;" vertex="1" parent="1">
+          <mxGeometry x="170" y="340" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-11" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-1" target="HWkJzAM3ItMbdXh2sgAB-17">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="720" y="745" as="sourcePoint" />
+            <mxPoint x="780" y="260" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-13" value="" style="endArrow=classic;html=1;rounded=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-3" target="HWkJzAM3ItMbdXh2sgAB-19">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="850" y="260" as="sourcePoint" />
+            <mxPoint x="730" y="400" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-15" value="System" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="715" width="30" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-16" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="HWkJzAM3ItMbdXh2sgAB-14">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="220" y="770" as="sourcePoint" />
+            <mxPoint x="270" y="720" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-17" value="system can warmup with&amp;nbsp; config prompt buckets" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="259" y="680" width="310" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-18" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="HWkJzAM3ItMbdXh2sgAB-17">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="145" y="755" as="sourcePoint" />
+            <mxPoint x="403" y="593" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-19" value="system can warmup with config decode buckets" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="250" y="900" width="310" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-14" value="system can warmup with a specific prompt/decode bucket" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="475" width="310" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-22" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="R6MZ_0kp74Mru3hihZvr-3" target="HWkJzAM3ItMbdXh2sgAB-14">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="660" y="530" as="sourcePoint" />
+            <mxPoint x="710" y="480" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dPd7M0vu7mvb35IAzC7L-1" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="HWkJzAM3ItMbdXh2sgAB-19">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="145" y="755" as="sourcePoint" />
+            <mxPoint x="310" y="755" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-3" value="VLLM_DECODE_BS_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_DECODE_BS_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp;VLLM_DECODE_BS_BUCKET_MAX&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;VLLM_DECODE_BLOCK_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; VLLM_DECODE_BLOCK_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; VLLM_DECODE_BLOCK_BUCKET_MAX&lt;/div&gt;&lt;/div&gt;" style="shape=note;strokeWidth=2;fontSize=14;size=20;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="730" y="875" width="320" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="HWkJzAM3ItMbdXh2sgAB-1" value="VLLM_PROMPT_BS_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_PROMPT_BS_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp;VLLM_PROMPT_BS_BUCKET_MAX&lt;/div&gt;&lt;div&gt;&amp;nbsp; VLLM_PROMPT_SEQ_BUCKET_MIN&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;VLLM_PROMPT_SEQ_BUCKET_STEP&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp;VLLM_PROMPT_SEQ_BUCKET_MAX&lt;/div&gt;&lt;/div&gt;" style="shape=note;strokeWidth=2;fontSize=14;size=20;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#666600;" vertex="1" parent="1">
+          <mxGeometry x="715" y="650" width="335" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="dPd7M0vu7mvb35IAzC7L-2" value="system can warmup with available memory for config prompt/decode buckets" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-310" y="780" width="310" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="dPd7M0vu7mvb35IAzC7L-3" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="dPd7M0vu7mvb35IAzC7L-2">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="145" y="755" as="sourcePoint" />
+            <mxPoint x="310" y="985" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dPd7M0vu7mvb35IAzC7L-4" value="system can warmup a prompt bucket with max batch_size and max seq_len&lt;br&gt;(for profile_run)" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-260" y="510" width="310" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="dPd7M0vu7mvb35IAzC7L-5" value="" style="endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="HWkJzAM3ItMbdXh2sgAB-15" target="dPd7M0vu7mvb35IAzC7L-4">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="145" y="755" as="sourcePoint" />
+            <mxPoint x="310" y="755" as="targetPoint" />
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
