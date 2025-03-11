@@ -1520,7 +1520,7 @@
         <mxCell id="osTAAtqf87BPPHd1tYb3-18" value="" style="html=1;points=[[0,0,0,0,5],[0,1,0,0,-5],[1,0,0,0,5],[1,1,0,0,-5]];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;curved&quot;:0,&quot;rounded&quot;:0};" vertex="1" parent="1">
           <mxGeometry x="-770" y="473" width="10" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="osTAAtqf87BPPHd1tYb3-19" value="warmup_scenario(batch_size, seq_len, phase)" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;" edge="1" target="osTAAtqf87BPPHd1tYb3-18" parent="1">
+        <mxCell id="osTAAtqf87BPPHd1tYb3-19" value="warmup_scenario(batch_size, seq_len, phase, kv_cache)" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;" edge="1" target="osTAAtqf87BPPHd1tYb3-18" parent="1">
           <mxGeometry x="0.0101" relative="1" as="geometry">
             <mxPoint x="-772" y="455" as="sourcePoint" />
             <Array as="points">
