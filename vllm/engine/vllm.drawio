@@ -1630,7 +1630,7 @@
         <mxCell id="xl1yDINgYo_EuncvOx_r-25" value="ref" style="shape=umlFrame;whiteSpace=wrap;html=1;pointerEvents=0;" vertex="1" parent="xl1yDINgYo_EuncvOx_r-24">
           <mxGeometry width="120" height="60.93480662983425" as="geometry" />
         </mxCell>
-        <mxCell id="xl1yDINgYo_EuncvOx_r-36" value="SD warmup_model" style="shape=umlFrame;whiteSpace=wrap;html=1;pointerEvents=0;recursiveResize=0;container=1;collapsible=0;width=160;" vertex="1" parent="1">
+        <mxCell id="xl1yDINgYo_EuncvOx_r-36" value="SD warmup_all_buckets" style="shape=umlFrame;whiteSpace=wrap;html=1;pointerEvents=0;recursiveResize=0;container=1;collapsible=0;width=160;" vertex="1" parent="1">
           <mxGeometry x="-20" y="30" width="1472" height="1000" as="geometry" />
         </mxCell>
         <mxCell id="UkGfk1o-zhJ_QfaLHpJs-30" value=":HPUBucketingContext" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;curved&quot;:0,&quot;rounded&quot;:0};" parent="xl1yDINgYo_EuncvOx_r-36" vertex="1">
