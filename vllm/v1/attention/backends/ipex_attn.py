@@ -192,6 +192,9 @@ class IPEXAttentionBackend(AttentionBackend):
     def get_builder_cls() -> type["IPEXAttentionMetadataBuilder"]:
         return IPEXAttentionMetadataBuilder
 
+    def use_cascade_attention(*args, **kwargs) -> bool:
+        # TODO: support cascade attention
+        return False
 
 class IPEXAttentionImpl(AttentionImpl):
 
