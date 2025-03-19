@@ -81,8 +81,12 @@ class SimpleConnector(KVConnectorBase):
         self.k_head_size = 64
         self.v_head_size = 512
         self.block_size = 128
-        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=torch.bfloat16, device="hpu")
-        self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=torch.bfloat16, device="hpu")
+        if config.cache_config.cache_dtype == "fp8_inc":
+            dtype = torch.float8_e4m3fn
+        else:
+            dtype = torch.bfloat16
+        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=dtype, device="hpu")
+        self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=dtype, device="hpu")
         self.cache_k = VLLMKVCache()
         self.cache_v = VLLMKVCache()
         # 2 pipes for every rank in the world
