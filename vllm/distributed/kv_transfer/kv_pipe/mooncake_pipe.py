@@ -1,5 +1,6 @@
 import json
 import os
+import io
 import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -238,15 +239,17 @@ class MooncakePipe(KVPipeBase):
 
     def _send_impl(self, tensor: torch.Tensor) -> None:
         """Implement the tensor sending logic."""
-        value_bytes = pickle.dumps(tensor)
-        self.transfer_engine.send_bytes(value_bytes)
+        buffer = io.BytesIO()
+        torch.save(tensor, buffer)
+        self.transfer_engine.send_bytes(buffer.getvalue())
 
     def _recv_impl(self) -> torch.Tensor:
         """Implement the tensor receiving logic."""
         start = time.time()
         data = self.transfer_engine.recv_bytes()
         logger.info("Time taken to receive bytes: %s", time.time() - start)
-        return pickle.loads(data)
+        data = io.BytesIO(data)
+        return torch.load(data)
 
     def send_tensor(self, tensor: Optional[torch.Tensor]) -> None:
         """Send tensor to the target process."""
