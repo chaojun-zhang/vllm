@@ -9,7 +9,7 @@ This guide details how to implement vLLM's disaggregated prefill functionality u
 1.  Start the Mooncake Docker container:
 
     ```bash
-    docker run -it -d --net=host --name mooncake --ulimit memlock=-1 -t -i alogfans/mooncake:latest /bin/bash
+    docker run -it -d -p 50001:50001 --net=host --name mooncake --ulimit memlock=-1 -t -i alogfans/mooncake:latest /bin/bash
     ```
 
 2.  Enter the Mooncake container:
@@ -97,7 +97,7 @@ This guide details how to implement vLLM's disaggregated prefill functionality u
     export MODEL_PATH=/software/data/models/DeepSeek-R1-BF16-w8afp8-static-no-ste-G2/
     export VLLM_MLA_DISABLE_REQUANTIZATION=1
     export PT_HPU_ENABLE_LAZY_COLLECTIVES="true"
-    export VLLM_EP_SIZE=1
+    export VLLM_EP_SIZE=8
     export VLLM_SKIP_WARMUP=True
     export VLLM_LOGGING_LEVEL=DEBUG
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
@@ -108,14 +108,14 @@ This guide details how to implement vLLM's disaggregated prefill functionality u
 
     ```bash
     cd /workspace/vllm
-    MOONCAKE_CONFIG_PATH=./pd_distributed/mooncake.json python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --port 8100 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization 0.9 -tp 1 --disable-async-output-proc --max-num-seqs 32 --enforce-eager --trust-remote-code --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
+    MOONCAKE_CONFIG_PATH=./pd_distributed/mooncake.json python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --port 8100 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization 0.9 -tp 8 --disable-async-output-proc --max-num-seqs 32 --enforce-eager --trust-remote-code --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}'
     ```
 
     ### Launch the kv_consumer role instance
 
     ```bash
     cd /workspace/vllm
-    MOONCAKE_CONFIG_PATH=./pd_distributed/mooncake.json python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --port 8200 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization 0.9 -tp 1 --disable-async-output-proc --max-num-seqs 32 --enforce-eager --trust-remote-code --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
+    MOONCAKE_CONFIG_PATH=./pd_distributed/mooncake.json python3 -m vllm.entrypoints.openai.api_server --model $MODEL_PATH --port 8200 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization 0.9 -tp 8 --disable-async-output-proc --max-num-seqs 32 --enforce-eager --trust-remote-code --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
     ```
 
 3.  Start the proxy server:
@@ -159,3 +159,9 @@ This guide details how to implement vLLM's disaggregated prefill functionality u
     }'
     ```
     **Note:** If you are not testing on the proxy server, replace `localhost` with the proxy server's IP address.
+
+## Benchmark
+```bash
+cd /workspace/vllm
+python ./benchmarks/benchmark_serving.py --backend vllm --model /software/data/models/DeepSeek-R1-BF16-w8afp8-static-no-ste-G2/ --dataset-name random --request-rate inf --host 127.0.0.1 --port 8123 --random-input-len 1000 --random-output-len 1000 --random-range-ratio 0.8 --trust-remote-code --max-concurrency 64 --num-prompts 640 --ignore-eos
+```
