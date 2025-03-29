@@ -1219,8 +1219,8 @@
             <mxPoint x="708" y="2180" as="targetPoint" />
             <Array as="points">
               <mxPoint x="828" y="1945" />
-              <mxPoint x="828" y="2110" />
-              <mxPoint x="708" y="2110" />
+              <mxPoint x="828" y="2160" />
+              <mxPoint x="708" y="2160" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -1319,6 +1319,21 @@
         </mxCell>
         <mxCell id="1XfyIGKfqZwNqnYryaJk-84" value="waiting request" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="1">
           <mxGeometry x="240" y="1890" as="geometry" />
+        </mxCell>
+        <mxCell id="1XfyIGKfqZwNqnYryaJk-87" value="" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="1XfyIGKfqZwNqnYryaJk-72" target="1XfyIGKfqZwNqnYryaJk-76">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="778" y="1750" as="sourcePoint" />
+            <mxPoint x="777" y="2250" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="900" y="1610" />
+              <mxPoint x="900" y="2240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="1XfyIGKfqZwNqnYryaJk-88" value="Yes" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="1XfyIGKfqZwNqnYryaJk-87">
+          <mxGeometry x="-0.8905" y="2" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
