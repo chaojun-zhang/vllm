@@ -1,4 +1,4 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" version="26.2.9" pages="13">
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" version="26.2.9" pages="14">
   <diagram id="apeP23jsynFM3OqLDiB0" name="Overview">
     <mxGraphModel dx="2465" dy="2429" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
@@ -897,7 +897,7 @@
     </mxGraphModel>
   </diagram>
   <diagram name="Scheduler" id="TIBVJPE8Si_duUqUehif">
-    <mxGraphModel dx="1404" dy="1080" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1007" dy="757" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -1068,11 +1068,11 @@
         <mxCell id="LSQgjN9iPX9e3Sujapoq-15" value="schedule" style="rounded=0;whiteSpace=wrap;html=1;labelPosition=center;verticalLabelPosition=middle;align=center;verticalAlign=middle;" parent="1" vertex="1">
           <mxGeometry x="1042.5" y="270" width="157.5" height="33" as="geometry" />
         </mxCell>
-        <mxCell id="2sGLy8P-El1I4F2QYhdU-2" value="Executor" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
-          <mxGeometry x="767" y="350" width="60" height="30" as="geometry" />
+        <mxCell id="2sGLy8P-El1I4F2QYhdU-2" value="Executor (MutliNode/MultiProcess)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+          <mxGeometry x="811" y="362" width="60" height="30" as="geometry" />
         </mxCell>
         <mxCell id="2sGLy8P-El1I4F2QYhdU-3" value="&lt;div&gt;execute_model&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-          <mxGeometry x="775" y="387" width="153" height="30" as="geometry" />
+          <mxGeometry x="780" y="405" width="153" height="30" as="geometry" />
         </mxCell>
         <mxCell id="1XfyIGKfqZwNqnYryaJk-7" value="allocate blocks for a running request with given token budget" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="650" y="1020" width="120" height="60" as="geometry" />
@@ -1367,41 +1367,43 @@
             <mxPoint x="830" y="2311" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-1" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-1" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
           <mxGeometry x="760" y="479" width="190" height="84" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-2" value="ModelRunner" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
-          <mxGeometry x="770" y="479" width="60" height="30" as="geometry" />
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-2" value="ModelRunner(GPU/XPU/HPU/CPU)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+          <mxGeometry x="827" y="482" width="60" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-3" value="&lt;div&gt;execute_model&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-3" value="&lt;div&gt;execute_model&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="780.5" y="516" width="153" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-4" value="" style="edgeStyle=elbowEdgeStyle;elbow=horizontal;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;startArrow=classic;startFill=1;fillColor=#e1d5e7;strokeColor=#9673a6;" edge="1" parent="1" source="2sGLy8P-El1I4F2QYhdU-3" target="CO_ZT-kWQoAAk7tcgkvU-3">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="862" y="307" as="sourcePoint" />
-            <mxPoint x="862" y="397" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="835" y="400" />
-            </Array>
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-5" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-5" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
           <mxGeometry x="756.5" y="595" width="190" height="84" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-6" value="Model" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
-          <mxGeometry x="754" y="598" width="60" height="30" as="geometry" />
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-6" value="Model(deepseek,llama)" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+          <mxGeometry x="795" y="597" width="60" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-7" value="&lt;div&gt;forward&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-7" value="&lt;div&gt;forward&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="780" y="631" width="153" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-11" value="" style="edgeStyle=elbowEdgeStyle;elbow=horizontal;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;startArrow=classic;startFill=1;fillColor=#e1d5e7;strokeColor=#9673a6;" edge="1" parent="1" source="CO_ZT-kWQoAAk7tcgkvU-3" target="CO_ZT-kWQoAAk7tcgkvU-7">
+        <mxCell id="CO_ZT-kWQoAAk7tcgkvU-11" value="" style="edgeStyle=elbowEdgeStyle;elbow=horizontal;endArrow=classic;html=1;curved=0;rounded=0;endSize=8;startSize=8;startArrow=classic;startFill=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" source="CO_ZT-kWQoAAk7tcgkvU-3" target="CO_ZT-kWQoAAk7tcgkvU-7" edge="1">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="862" y="427" as="sourcePoint" />
             <mxPoint x="862" y="526" as="targetPoint" />
             <Array as="points" />
             <mxPoint as="offset" />
           </mxGeometry>
+        </mxCell>
+        <mxCell id="Cv3nWoVVOpC5UpGvWn59-3" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="2sGLy8P-El1I4F2QYhdU-3" target="CO_ZT-kWQoAAk7tcgkvU-3">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="1168" y="507" as="sourcePoint" />
+            <mxPoint x="1218" y="457" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Cv3nWoVVOpC5UpGvWn59-5" value="" style="rounded=0;whiteSpace=wrap;html=1;strokeWidth=2;fillColor=#bac8d3;strokeColor=#23445d;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="138" width="180" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="Cv3nWoVVOpC5UpGvWn59-6" value="KVCacheBlock" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="1507" y="143" width="60" height="30" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
@@ -3171,6 +3173,173 @@
         </mxCell>
         <mxCell id="WqauDjclBJfLhs434689-2" value="根据request和需要分配的token数量" style="rounded=1;whiteSpace=wrap;html=1;absoluteArcSize=1;arcSize=14;strokeWidth=2;" vertex="1" parent="1">
           <mxGeometry x="-69" y="1349" width="188" height="57" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="mlQKXHHNxG8MZ8T6pEdN" name="hpu.forward_model">
+    <mxGraphModel dx="1809" dy="757" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-1" value="update_state" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="270" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-2" value="Input: SchedulerOutput" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="345" y="160" width="110" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-3" value="ensure_encode_first" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="370" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-4" value="get_prompt_decode_info" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="480" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-5" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-2" target="SU0gm3zUS8uU_qwfGmjX-1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="580" y="300" as="sourcePoint" />
+            <mxPoint x="630" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-6" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-1" target="SU0gm3zUS8uU_qwfGmjX-3">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="250" as="sourcePoint" />
+            <mxPoint x="410" y="280" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-7" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-3" target="SU0gm3zUS8uU_qwfGmjX-4">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="340" as="sourcePoint" />
+            <mxPoint x="410" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-21" value="&lt;div style=&quot;background-color:#2b2b2b;color:#a1b6c4&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;&lt;span style=&quot;color:#47a2ed;&quot;&gt;class &lt;/span&gt;&lt;span style=&quot;color:#47ccb1;&quot;&gt;CachedRequestState&lt;/span&gt;:&lt;br&gt;&lt;br&gt;    req_id: &lt;span style=&quot;color:#47ccb1;&quot;&gt;str&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#47ccb1;&quot;&gt;    &lt;/span&gt;prompt_token_ids: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[int]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;prompt: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[str]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;mm_inputs: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[MultiModalKwargs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;mm_positions: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[&quot;PlaceholderRange&quot;]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;sampling_params: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;SamplingParams&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;generator: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[torch.Generator]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;block_ids: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[int]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;num_computed_tokens: &lt;span style=&quot;color:#47ccb1;&quot;&gt;int&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#47ccb1;&quot;&gt;    &lt;/span&gt;output_token_ids: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[int]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;mrope_positions: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[torch.Tensor] &lt;/span&gt;= &lt;span style=&quot;color:#47a2ed;&quot;&gt;None&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#47a2ed;&quot;&gt;    &lt;/span&gt;mrope_position_delta: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[int] &lt;/span&gt;= &lt;span style=&quot;color:#47a2ed;&quot;&gt;None&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#47a2ed;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#47a2ed;&quot;&gt;    &lt;/span&gt;lora_request: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[LoRARequest] &lt;/span&gt;= &lt;span style=&quot;color:#47a2ed;&quot;&gt;None&lt;/span&gt;&lt;/pre&gt;&lt;/div&gt;" style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-413" y="470" width="490" height="380" as="geometry" />
+        </mxCell>
+        <UserObject label="&lt;div style=&quot;background-color: rgb(43, 43, 43); color: rgb(161, 182, 196);&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;&lt;span style=&quot;color: rgb(71, 162, 237);&quot;&gt;class &lt;/span&gt;&lt;span style=&quot;color: rgb(71, 204, 177);&quot;&gt;SchedulerOutput&lt;/span&gt;:&lt;br&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;scheduled_new_reqs: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;List[NewRequestData]&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;scheduled_cached_reqs: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;List[CachedRequestData]&lt;/span&gt;&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;num_scheduled_tokens: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;Dict[str, int]&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;total_num_scheduled_tokens: &lt;span style=&quot;color: rgb(71, 204, 177);&quot;&gt;int&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;scheduled_encoder_inputs: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;Dict[str, List[int]]&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;num_common_prefix_blocks: &lt;span style=&quot;color: rgb(71, 204, 177);&quot;&gt;int&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;finished_req_ids: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;Set[str]&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;free_encoder_input_ids: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;List[Tuple[str, int]]&lt;/span&gt;&lt;/pre&gt;&lt;/div&gt;" id="SU0gm3zUS8uU_qwfGmjX-22">
+          <mxCell style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+            <mxGeometry x="-430" y="70" width="455" height="180" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <UserObject label="&lt;div style=&quot;background-color: rgb(43, 43, 43); color: rgb(161, 182, 196);&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;&lt;span style=&quot;color: rgb(71, 162, 237);&quot;&gt;class &lt;/span&gt;&lt;span style=&quot;color: rgb(71, 204, 177);&quot;&gt;HPUModelRunner&lt;/span&gt;:&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;        &lt;/span&gt;&lt;span style=&quot;color: rgb(86, 156, 213);&quot;&gt;self&lt;/span&gt;.kv_caches: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;List[torch.Tensor] &lt;/span&gt;= []&lt;br&gt;        &lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;# Request states.&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;        &lt;/span&gt;&lt;span style=&quot;color: rgb(86, 156, 213);&quot;&gt;self&lt;/span&gt;.requests: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;Dict[str, CachedRequestState] &lt;/span&gt;= {}&lt;br&gt;        &lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;# Persistent batch.&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;        &lt;/span&gt;&lt;span style=&quot;color: rgb(86, 156, 213);&quot;&gt;self&lt;/span&gt;.input_batch = &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;InputBatch&lt;/span&gt;&lt;/pre&gt;&lt;/div&gt;" id="SU0gm3zUS8uU_qwfGmjX-23">
+          <mxCell style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+            <mxGeometry x="-420" y="300" width="560" height="130" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-24" value="prepare_inputs" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="585" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-25" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-4" target="SU0gm3zUS8uU_qwfGmjX-24">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="440" as="sourcePoint" />
+            <mxPoint x="410" y="490" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-26" value="forward prefill" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="690" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-27" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" target="SU0gm3zUS8uU_qwfGmjX-26">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="400" y="645" as="sourcePoint" />
+            <mxPoint x="410" y="595" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-28" value="forward decode" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="800" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-29" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-26" target="SU0gm3zUS8uU_qwfGmjX-28">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="655" as="sourcePoint" />
+            <mxPoint x="410" y="700" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-30" value="concat prefill &amp;amp; decode output" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="900" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-31" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-28" target="SU0gm3zUS8uU_qwfGmjX-30">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="760" as="sourcePoint" />
+            <mxPoint x="410" y="810" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-33" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-30" target="SU0gm3zUS8uU_qwfGmjX-64">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="410" y="870" as="sourcePoint" />
+            <mxPoint x="400" y="1000" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-36" value="&lt;div style=&quot;background-color:#2b2b2b;color:#a1b6c4&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;&lt;span style=&quot;color:#47a2ed;&quot;&gt;class &lt;/span&gt;&lt;span style=&quot;color:#47ccb1;&quot;&gt;ModelRunnerOutput&lt;/span&gt;:&lt;br&gt;&lt;br&gt;    &lt;span style=&quot;color:#699856;&quot;&gt;# [num_reqs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    &lt;/span&gt;req_ids: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[str]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;# req_id -&amp;gt; index&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    &lt;/span&gt;req_id_to_index: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Dict[str, int]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;# [num_reqs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    &lt;/span&gt;sampled_token_ids: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;List[int]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;# [num_reqs, max_num_logprobs + 1]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    # [num_reqs, max_num_logprobs + 1]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    # [num_reqs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    &lt;/span&gt;logprobs: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Optional[LogprobsLists]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#e6e6aa;&quot;&gt;    &lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;# req_id -&amp;gt; (token_ids, logprobs, ranks)&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    # [prompt_len, num_prompt_logprobs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    # [prompt_len, num_prompt_logprobs]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    # [prompt_len]&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color:#699856;&quot;&gt;    &lt;/span&gt;prompt_logprobs_dict: &lt;span style=&quot;color:#e6e6aa;&quot;&gt;Dict[str, LogprobsTensors]&lt;/span&gt;&lt;/pre&gt;&lt;/div&gt;" style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-420" y="920" width="473" height="380" as="geometry" />
+        </mxCell>
+        <UserObject label="&lt;div style=&quot;background-color: rgb(43, 43, 43); color: rgb(161, 182, 196);&quot;&gt;&lt;pre style=&quot;font-family:&#39;JetBrains Mono&#39;,monospace;font-size:11.3pt;&quot;&gt;&lt;br&gt;&lt;span style=&quot;color: rgb(71, 162, 237);&quot;&gt;class &lt;/span&gt;&lt;span style=&quot;color: rgb(71, 204, 177);&quot;&gt;InputBatch&lt;/span&gt;:&lt;br&gt;&lt;br&gt;    max_num_reqs:int&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;    &lt;/span&gt;max_model_len: int&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;    &lt;/span&gt;max_num_blocks_per_req = &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_blocks_per_req&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;    &lt;/span&gt;req_ids: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;List[Optional[str]] &lt;/span&gt;= [&lt;span style=&quot;color: rgb(71, 162, 237);&quot;&gt;None&lt;/span&gt;] * &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;    &lt;/span&gt;req_id_to_index: &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;Dict[str, int] &lt;/span&gt;= {}&lt;br&gt;      &lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;&lt;br&gt;&lt;/span&gt;&lt;span style=&quot;color: rgb(105, 152, 86);&quot;&gt;    &lt;/span&gt;token_ids_cpu_tensor = torch.&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;zeros&lt;/span&gt;(&lt;br&gt;        (&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;, &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_model_len&lt;/span&gt;),&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;device&lt;/span&gt;=&lt;span style=&quot;color: rgb(205, 144, 105);&quot;&gt;&quot;cpu&quot;&lt;/span&gt;,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;dtype&lt;/span&gt;=torch.int32,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;pin_memory&lt;/span&gt;=&lt;span style=&quot;color: rgb(71, 162, 237);&quot;&gt;False&lt;/span&gt;,&lt;br&gt;        )&lt;br&gt;     token_ids_cpu = token_ids_cpu_tensor.&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;numpy&lt;/span&gt;()&lt;br&gt;     num_tokens = np.&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;zeros&lt;/span&gt;(&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;, &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;dtype&lt;/span&gt;=np.int32)&lt;br&gt;     num_prompt_tokens = np.&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;zeros&lt;/span&gt;(&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;, &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;dtype&lt;/span&gt;=np.int32)&lt;br&gt;     num_computed_tokens_cpu = np.&lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;empty&lt;/span&gt;(&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;, &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;dtype&lt;/span&gt;=np.int32)&lt;br&gt;     block_table = &lt;span style=&quot;color: rgb(230, 230, 170);&quot;&gt;BlockTable&lt;/span&gt;(&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;=&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_reqs&lt;/span&gt;,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_model_len&lt;/span&gt;=&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_model_len&lt;/span&gt;,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_blocks_per_req&lt;/span&gt;=&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;max_num_blocks_per_req&lt;/span&gt;,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;pin_memory&lt;/span&gt;=&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;pin_memory&lt;/span&gt;,&lt;br&gt;            &lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;device&lt;/span&gt;=&lt;span style=&quot;color: rgb(148, 219, 253);&quot;&gt;device&lt;/span&gt;,&lt;br&gt;        )&lt;br&gt;&lt;/pre&gt;&lt;/div&gt;" id="SU0gm3zUS8uU_qwfGmjX-38">
+          <mxCell style="text;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+            <mxGeometry x="-440" y="1350" width="630" height="510" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-39" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-24" target="SU0gm3zUS8uU_qwfGmjX-40">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="590" y="560" as="sourcePoint" />
+            <mxPoint x="640" y="510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-40" value="" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="569.38" width="390" height="92.5" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-41" value="prepare_prefill_inputs" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="605" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-43" value="prepare_decode_inputs" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="790" y="605" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-46" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-41" target="SU0gm3zUS8uU_qwfGmjX-43">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="660" y="625" as="sourcePoint" />
+            <mxPoint x="680" y="625" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-49" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-26" target="SU0gm3zUS8uU_qwfGmjX-56">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="490" y="625" as="sourcePoint" />
+            <mxPoint x="580" y="720" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-50" value="Prefill padding" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="590" y="575" width="100" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-51" value="Decode padding" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="780" y="575" width="100" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-53" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-28" target="SU0gm3zUS8uU_qwfGmjX-59">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="490" y="730" as="sourcePoint" />
+            <mxPoint x="580" y="830" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-55" value="Model.forward" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="690" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-56" value="HpuModelAdapter.forward" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="690" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-57" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-56" target="SU0gm3zUS8uU_qwfGmjX-55">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="490" y="730" as="sourcePoint" />
+            <mxPoint x="590" y="730" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-58" value="Model.forward" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="800" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-59" value="HpuModelAdapter.forward" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="800" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-60" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="SU0gm3zUS8uU_qwfGmjX-59" target="SU0gm3zUS8uU_qwfGmjX-58">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="490" y="840" as="sourcePoint" />
+            <mxPoint x="590" y="840" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="SU0gm3zUS8uU_qwfGmjX-64" value="Output:&amp;nbsp; ModelRunnerOutput" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="1030" width="120" height="80" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
