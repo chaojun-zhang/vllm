@@ -78,14 +78,20 @@ class XPUPlatform(Platform):
         # check and update model config
         model_config = vllm_config.model_config
         if model_config.dtype == torch.bfloat16:
-            bf16_supported = cls.device_support_bf16()
-            if not bf16_supported:
-                logger.warning(
-                    "bfloat16 is only supported on Intel Data Center GPU, "
-                    "Intel Arc GPU is not supported yet. Your device is %s,"
-                    "which is not supported. will fallback to float16",
-                    cls.get_device_name())
-                model_config.dtype = torch.float16
+            # work around for https://jira.devtools.intel.com/browse/VLLMZ-50
+            logger.warning(
+                "You are currently using the bfloat16 (bf16) data type for XPU,"
+                "If you encounter precision-related issues (e.g., numerical instability, NaN values)"
+                " or data type compatibility errors, we recommend switching to "
+                "float16 (fp16) as an alternative.")
+            # bf16_supported = cls.device_support_bf16()
+            # if not bf16_supported:
+            #     logger.warning(
+            #         "bfloat16 is only supported on Intel Data Center GPU, "
+            #         "Intel Arc GPU is not supported yet. Your device is %s,"
+            #         "which is not supported. will fallback to float16",
+            #         cls.get_device_name())
+            #     model_config.dtype = torch.float16
         if not model_config.enforce_eager:
             logger.warning("XPU graph support is experimental currently!")
 
