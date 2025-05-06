@@ -112,15 +112,16 @@ class XPUPlatform(Platform):
         if vllm_config.speculative_config:
             if envs.VLLM_USE_V1:
                 parallel_config.worker_cls = \
-                    "vllm.v1.worker.gpu_worker.Worker"
+                    "vllm.v1.worker.xpu_worker.XPUWorker"
             else:
                 raise NotImplementedError(
                     "XPU v0 does not support speculative decoding")
-        if envs.VLLM_USE_V1:
-            parallel_config.worker_cls =\
-                "vllm.v1.worker.xpu_worker.XPUWorker"
         else:
-            parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
+            if envs.VLLM_USE_V1:
+                parallel_config.worker_cls =\
+                    "vllm.v1.worker.xpu_worker.XPUWorker"
+            else:
+                parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
 
         if parallel_config.distributed_executor_backend is None:
             if parallel_config.world_size > 1:
