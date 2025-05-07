@@ -62,7 +62,9 @@ class XPUWorker(Worker):
         if current_platform.is_data_center_gpu():
             return torch.xpu.mem_get_info()
         else:
-            _, total_gpu_memory = torch.xpu.mem_get_info()
+            # torch.xpu.mem_get_info() doesn't work on bmg device.
+            # see https://jira.devtools.intel.com/browse/VLLMZ-62
+            total_gpu_memory = torch.xpu.get_device_properties().total_memory
             # FIXME: memory_allocated() doesn't count non-torch allocations,
             # and we don't have any API to get it. so we mark it as 128MB.
             used_memory = torch.xpu.memory_allocated()
@@ -87,7 +89,7 @@ class XPUWorker(Worker):
         torch.xpu.empty_cache()
         torch.xpu.reset_peak_memory_stats()
 
-        free_gpu_memory, total_gpu_memory = torch.xpu.mem_get_info()
+        free_gpu_memory, total_gpu_memory = self.xpu_get_mem_info()
         current_allocated_bytes = torch.xpu.memory_allocated()
         msg = ("Before memory profiling run, "
                f"total GPU memory: {total_gpu_memory / 1024**2:.2f} MB, "
