@@ -93,9 +93,7 @@ class XPUPlatform(Platform):
             bf16_supported = cls.device_support_bf16()
             if not bf16_supported:
                 logger.warning(
-                    "bfloat16 is only supported on Intel Data Center GPU, "
-                    "Intel Arc GPU is not supported yet. Your device is %s,"
-                    " which is not supported. will fallback to float16",
+                    "Your device (%s) does not support bfloat16. Reverting to float16.",
                     cls.get_device_name())
                 model_config.dtype = torch.float16
         if not model_config.enforce_eager:
@@ -155,15 +153,12 @@ class XPUPlatform(Platform):
 
     @classmethod
     def device_support_bf16(cls) -> bool:
-        device_name = cls.get_device_name().lower()
         if cls.is_client_gpu():
             return False
         elif cls.is_data_center_gpu():
             return True
         else:
-            logger.warning("Unknown device name %s, always use float16",
-                           device_name)
-            return False
+            return torch.xpu.is_bf16_supported()
 
     @classmethod
     def is_data_center_gpu(cls) -> bool:
@@ -173,7 +168,7 @@ class XPUPlatform(Platform):
     @classmethod
     def is_client_gpu(cls) -> bool:
         device_name = cls.get_device_name().lower()
-        return device_name.count("arc") > 0
+        return device_name.count("a770") > 0
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
