@@ -141,8 +141,19 @@ def xpu_platform_plugin() -> Optional[str]:
     try:
         # installed IPEX if the machine has XPUs.
         import intel_extension_for_pytorch  # noqa: F401
-        import oneccl_bindings_for_pytorch  # noqa: F401
         import torch
+        import os
+        XPU_CCL_BACKEND = os.getenv("XPU_CCL_BACKEND", "ccl")
+        if XPU_CCL_BACKEND == "ccl":
+            import oneccl_bindings_for_pytorch  # noqa: F401
+        elif XPU_CCL_BACKEND == "xccl":
+            from packaging.version import Version
+            if Version(Version(torch.__version__).base_version) < Version("2.8.0"):
+                raise ValueError("XCCL is unavailable in torch < 2.8.0")
+            if torch.distributed.is_xccl_available():
+                logger.debug("Confirmed XCCL is available.")
+            else:
+                raise ValueError("XCCL is unavailable in current torch")
         if hasattr(torch, 'xpu') and torch.xpu.is_available():
             is_xpu = True
             logger.debug("Confirmed XPU platform is available.")
