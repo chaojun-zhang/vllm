@@ -158,6 +158,7 @@ def init_worker_distributed_environment(
             "is not already initialized")
     else:
         # oneapi 2025 will use pidfd as default
+        XPU_CCL_BACKEND = os.getenv("XPU_CCL_BACKEND", "ccl")
         ENV_CCL_ZE_IPC_EXCHANGE = os.getenv("CCL_ZE_IPC_EXCHANGE", "drmfd")
         ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
         ENV_LOCAL_WORLD_SIZE = os.getenv("LOCAL_WORLD_SIZE",
@@ -171,7 +172,7 @@ def init_worker_distributed_environment(
             rank=rank,
             distributed_init_method=distributed_init_method,
             local_rank=local_rank,
-            backend="ccl")
+            backend=XPU_CCL_BACKEND)
 
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
