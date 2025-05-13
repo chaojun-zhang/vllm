@@ -24,6 +24,7 @@ from vllm.model_executor.parameter import (ChannelQuantScaleParameter,
                                            PackedColumnParameter,
                                            PackedvLLMParameter,
                                            RowvLLMParameter)
+from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
 logger = init_logger(__name__)
@@ -184,6 +185,8 @@ class GPTQBitBLASConfig(QuantizationConfig):
 
     @classmethod
     def is_gptq_bitblas_compatible(cls, quant_config: Dict[str, Any]):
+        if not current_platform.is_cuda():
+            return False
         # Extract data from quant config.
         num_bits = quant_config.get("bits")
         group_size = quant_config.get("group_size")
