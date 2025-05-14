@@ -11,6 +11,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 
+from vllm.platforms import current_platform
 from vllm.attention import AttentionType, get_attn_backend
 from vllm.attention.backends.abstract import (AttentionBackend,
                                               AttentionMetadataBuilder)
@@ -197,8 +198,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.vllm_config.compilation_config.cudagraph_capture_sizes))
 
         # Cache the device properties.
-        self.device_properties = torch.cuda.get_device_properties(self.device)
-        self.num_sms = self.device_properties.multi_processor_count
+        if current_platform.is_cuda():
+            self.device_properties = torch.cuda.get_device_properties(self.device)
+            self.num_sms = self.device_properties.multi_processor_count
 
         # Persistent buffers for CUDA graphs.
         self.input_ids = torch.zeros(self.max_num_tokens,
@@ -769,8 +771,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             num_query_heads=self.num_query_heads,
             num_kv_heads=kv_cache_spec.num_kv_heads,
             use_alibi=self.use_alibi,
-            use_sliding_window=use_sliding_window,
-            num_sms=self.num_sms,
+            use_sliding_window=self.window_size is not None,
+            num_sms=self.num_sms if current_platform.is_cuda() else None,
         )
         return common_prefix_len if use_cascade else 0
 

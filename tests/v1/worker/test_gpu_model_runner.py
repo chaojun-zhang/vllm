@@ -12,6 +12,41 @@ from vllm.v1.kv_cache_interface import (FullAttentionSpec, KVCacheConfig,
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.worker.gpu_input_batch import InputBatch
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+from vllm.platforms import current_platform
+
+
+def initialize_kv_cache(runner: GPUModelRunner):
+    """
+    Only perform necessary steps in GPUModelRunner.initialize_kv_cache()
+    """
+    kv_cache_config = KVCacheConfig(
+        num_blocks=10,
+        tensors={
+            "layer.0": KVCacheTensor(size=1024),
+        },
+        kv_cache_groups=[
+            KVCacheGroupSpec(
+                layer_names=["layer.0"],
+                kv_cache_spec=FullAttentionSpec(
+                    block_size=16,
+                    num_kv_heads=runner.model_config.get_num_kv_heads(
+                        runner.parallel_config),
+                    head_size=runner.model_config.get_head_size(),
+                    dtype=runner.kv_cache_dtype,
+                    use_mla=False,
+                ))
+        ])
+    runner.kv_cache_config = kv_cache_config
+    runner.input_batch = InputBatch(
+        max_num_reqs=runner.max_num_reqs,
+        max_model_len=runner.max_model_len,
+        max_num_batched_tokens=runner.max_num_tokens,
+        device=runner.device,
+        pin_memory=runner.pin_memory,
+        vocab_size=runner.model_config.get_vocab_size(),
+        block_size=kv_cache_config.kv_cache_groups[0].kv_cache_spec.block_size,
+    )
+    runner.initialize_attn_backend(kv_cache_config)
 
 
 def initialize_kv_cache(runner: GPUModelRunner):
@@ -78,7 +113,7 @@ def model_runner():
         parallel_config=parallel_config,
     )
 
-    device = "cuda"
+    device = current_platform.device_name
     runner = GPUModelRunner(vllm_config, device)
     initialize_kv_cache(runner)
     return runner

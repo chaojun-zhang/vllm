@@ -8,7 +8,7 @@ from vllm.platforms import current_platform
 from vllm.v1.sample.ops.topk_topp_sampler import (apply_top_k_top_p,
                                                   is_flashinfer_available)
 
-DEVICE = "cuda"
+DEVICE = current_platform.device_name
 
 BATCH_SIZE = 1024
 VOCAB_SIZE = 128 * 1024
