@@ -718,6 +718,11 @@ def fork_new_process_for_each_test(
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> None:
         # Make the process the leader of its own process group
         # to avoid sending SIGTERM to the parent process
+        # To use XPU with multiprocessing, must use the 'spawn' start method via 'VLLM_WORKER_MULTIPROC_METHOD=spawn'
+        if current_platform.is_xpu():
+            f(*args, **kwargs)
+            return
+
         os.setpgrp()
         from _pytest.outcomes import Skipped
         pid = os.fork()
