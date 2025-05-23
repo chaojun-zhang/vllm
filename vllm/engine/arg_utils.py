@@ -1384,9 +1384,17 @@ class EngineArgs:
             _raise_or_fallback(feature_name=name, recommend_to_remove=False)
             return False
 
-        # Non-[CUDA, TPU] may be supported on V1, but off by default for now.
+        # ngram is supported on V1, but off by default for now.
+        if is_ngram_enabled and _warn_or_fallback("ngram"):
+            return False
+
+        # Eagle is under development, so we don't support it yet.
+        if is_eagle_enabled and _warn_or_fallback("Eagle"):
+            return False
+
+        # Non-[CUDA, TPU, XPU] may be supported on V1, but off by default for now.
         v0_hardware = not any(
-            (current_platform.is_cuda(), current_platform.is_tpu()))
+            (current_platform.is_cuda(), current_platform.is_tpu(), current_platform.is_xpu()))
         if v0_hardware and _warn_or_fallback(  # noqa: SIM103
                 current_platform.device_name):
             return False
