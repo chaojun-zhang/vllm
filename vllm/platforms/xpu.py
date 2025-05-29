@@ -76,7 +76,7 @@ class XPUPlatform(Platform):
         if cache_config and cache_config.block_size is None:
             cache_config.block_size = 16
 
-        # FIXME: For XPU, force to eager mode currently, remove this logic once t.compile support is mature.
+        # FIXME: Temporarily forcing eager mode, remove after t.compile support stabilizes.
         if vllm_config.model_config is not None and not vllm_config.model_config.enforce_eager:
             vllm_config.compilation_config.level = CompilationLevel.NO_COMPILATION
 
