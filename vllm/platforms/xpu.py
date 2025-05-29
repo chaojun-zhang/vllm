@@ -8,9 +8,9 @@ import vllm.envs as envs
 from vllm.logger import init_logger
 
 from .interface import DeviceCapability, Platform, PlatformEnum, _Backend
-
+from vllm.config import CompilationLevel
 if TYPE_CHECKING:
-    from vllm.config import ModelConfig, VllmConfig, CompilationLevel
+    from vllm.config import ModelConfig, VllmConfig
 else:
     ModelConfig = None
     VllmConfig = None
@@ -77,7 +77,8 @@ class XPUPlatform(Platform):
             cache_config.block_size = 16
 
         # FIXME: Temporarily forcing eager mode, remove after t.compile support stabilizes.
-        if vllm_config.model_config is not None and not vllm_config.model_config.enforce_eager:
+        if (envs.VLLM_USE_V1 and vllm_config.model_config is not None
+                and not vllm_config.model_config.enforce_eager):
             vllm_config.compilation_config.level = CompilationLevel.NO_COMPILATION
 
         # Instances created using VllmConfig() typically have model_config as None by default.
