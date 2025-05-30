@@ -94,9 +94,17 @@ class XPUPlatform(Platform):
             else:
                 cache_config.block_size = 16
 
-        # Instances created using VllmConfig() typically have model_config as None by default.
-        # The modification involves adding a check to prevent potential null exceptions
-        # check and update model config
+        # FIXME: Temporarily forcing eager mode
+        # remove after t.compile support stabilizes.
+        if envs.VLLM_USE_V1 and vllm_config.model_config is not None and \
+            not vllm_config.model_config.enforce_eager:
+            from vllm.config import CompilationLevel
+            vllm_config.compilation_config.level = \
+                CompilationLevel.NO_COMPILATION
+
+        # Instances created using VllmConfig() typically have model_config as
+        # None by default. The modification involves adding a check to prevent
+        # potential null exceptions check and update model config
         if vllm_config.model_config is not None:
             model_config = vllm_config.model_config
             if model_config.dtype == torch.bfloat16:
