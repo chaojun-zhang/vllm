@@ -316,6 +316,9 @@ class CudaPlatformBase(Platform):
     def get_piecewise_backend_cls(cls) -> str:
         return "vllm.compilation.cuda_piecewise_backend.CUDAPiecewiseBackend"  # noqa
 
+    @classmethod
+    def synchronize(cls) -> None:
+        return torch.cuda.synchronize()
 
 # NVML utils
 # Note that NVML is not affected by `CUDA_VISIBLE_DEVICES`,

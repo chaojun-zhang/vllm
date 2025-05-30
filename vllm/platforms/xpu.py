@@ -196,3 +196,7 @@ class XPUPlatform(Platform):
     @classmethod
     def device_count(cls) -> int:
         return torch.xpu.device_count()
+    
+    @classmethod
+    def synchronize(cls) -> None:
+        return torch.xpu.synchronize()
