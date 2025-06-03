@@ -88,7 +88,7 @@ class XPUWorker(Worker):
         torch.xpu.empty_cache()
         torch.xpu.reset_peak_memory_stats()
 
-        free_gpu_memory, total_gpu_memory = torch.xpu.mem_get_info()
+        free_gpu_memory, total_gpu_memory = self.xpu_get_mem_info()
         current_allocated_bytes = torch.xpu.memory_allocated()
         msg = ("Before memory profiling run, "
                f"total GPU memory: {total_gpu_memory / 1024**2:.2f} MB, "

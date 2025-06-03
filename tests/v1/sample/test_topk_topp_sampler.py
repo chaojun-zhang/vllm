@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 import torch
-from flashinfer.sampling import top_k_renorm_probs, top_p_renorm_probs
 from torch import Generator
 
 from vllm.platforms import current_platform
@@ -12,6 +11,9 @@ DEVICE = current_platform.device_name
 
 BATCH_SIZE = 1024
 VOCAB_SIZE = 128 * 1024
+
+if is_flashinfer_available:
+    from flashinfer.sampling import top_k_renorm_probs, top_p_renorm_probs
 
 FLASHINFER_ENABLED = current_platform.is_cuda() and is_flashinfer_available
 

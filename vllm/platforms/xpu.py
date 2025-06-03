@@ -182,6 +182,18 @@ class XPUPlatform(Platform):
         return torch.xpu.max_memory_allocated(device)
 
     @classmethod
+    def device_support_bf16(cls) -> bool:
+        device_name = cls.get_device_name().lower()
+        if device_name.count("arc") > 0:
+            return False
+        elif device_name.count("data center gpu") > 0:
+            return True
+        else:
+            logger.warning("Unknown device name %s, always use float16",
+                           device_name)
+            return False
+
+    @classmethod
     def fp8_dtype(cls) -> torch.dtype:
         if envs.VLLM_XPU_FP8_DTYPE == "e4m3":
             return torch.float8_e4m3fn
