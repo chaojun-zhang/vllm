@@ -7,6 +7,7 @@ import vllm.envs as envs
 from vllm import LLM
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.platforms import current_platform
 
 UNSUPPORTED_MODELS_V1 = [
     "openai/whisper-large-v3",  # transcription
@@ -25,7 +26,7 @@ def test_reject_unsupported_models(monkeypatch, model):
         m.setenv("VLLM_USE_V1", "1")
         args = AsyncEngineArgs(model=model)
 
-        with pytest.raises((NotImplementedError, ValueError)):
+        with pytest.raises((NotImplementedError)):
             _ = args.create_engine_config()
         m.delenv("VLLM_USE_V1")
 
@@ -40,11 +41,13 @@ def test_unsupported_configs(monkeypatch):
     with monkeypatch.context() as m:
         m.setenv("VLLM_USE_V1", "1")
 
-        with pytest.raises(NotImplementedError):
-            AsyncEngineArgs(
-                model=MODEL,
-                kv_cache_dtype="fp8",
-            ).create_engine_config()
+        # intel xpu supports fp8 as kv_cache_dtype
+        if not current_platform.is_xpu():
+            with pytest.raises(NotImplementedError):
+                AsyncEngineArgs(
+                    model=MODEL,
+                    kv_cache_dtype="fp8",
+                ).create_engine_config()
 
         with pytest.raises(NotImplementedError):
             AsyncEngineArgs(
