@@ -264,6 +264,9 @@ class XPUModelRunner(GPUModelRunner):
     #                                          pin_memory=self.pin_memory)
     #     self.seq_start_loc_np = self.seq_start_loc_cpu.numpy()
 
+    def _init_device_properties(self) -> None:
+        self.num_sms = None
+
     def _prepare_inputs(self, scheduler_output: "SchedulerOutput"):
         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         assert total_num_scheduled_tokens > 0
