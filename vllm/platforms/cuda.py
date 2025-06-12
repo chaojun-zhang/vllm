@@ -317,6 +317,10 @@ class CudaPlatformBase(Platform):
         return "vllm.compilation.cuda_piecewise_backend.CUDAPiecewiseBackend"  # noqa
 
     @classmethod
+    def device_count(cls) -> int:
+        return torch.cuda.device_count()
+
+    @classmethod
     def synchronize(cls) -> None:
         return torch.cuda.synchronize()
 
