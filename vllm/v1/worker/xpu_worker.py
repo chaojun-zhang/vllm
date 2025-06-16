@@ -9,7 +9,7 @@ import vllm.envs as envs
 from vllm.config import ParallelConfig, VllmConfig
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
-                              tensor_model_parallel_all_reduce)
+                              get_world_group)
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
 from vllm.platforms import current_platform
@@ -177,4 +177,4 @@ def init_worker_distributed_environment(
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
     # global all_reduce needed for overall oneccl warm up
-    tensor_model_parallel_all_reduce(torch.zeros(1).xpu())
+    torch.distributed.all_reduce(torch.zeros(1).xpu(), group=get_world_group().device_group)
