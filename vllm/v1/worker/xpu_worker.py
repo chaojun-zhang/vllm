@@ -8,7 +8,8 @@ import torch.distributed
 import vllm.envs as envs
 from vllm.config import ParallelConfig, VllmConfig
 from vllm.distributed import (ensure_model_parallel_initialized,
-                              init_distributed_environment)
+                              init_distributed_environment,
+                              tensor_model_parallel_all_reduce)
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
 from vllm.platforms import current_platform
@@ -158,34 +159,22 @@ def init_worker_distributed_environment(
 ) -> None:
     """Initialize the distributed environment."""
 
-    if torch.distributed.is_initialized():
-        torch_world_size = torch.distributed.get_world_size()
-        if torch_world_size != parallel_config.world_size:
-            raise RuntimeError(
-                "torch.distributed is already initialized but the torch "
-                "world size does not match parallel_config.world_size "
-                f"({torch_world_size} vs. {parallel_config.world_size}).")
-    elif not distributed_init_method:
-        raise ValueError(
-            "distributed_init_method must be set if torch.distributed "
-            "is not already initialized")
-    else:
-        default_backend = "xccl" if supports_xccl() else "ccl"
-        XPU_CCL_BACKEND = os.getenv("XPU_CCL_BACKEND", default_backend)
-        ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
-        ENV_LOCAL_WORLD_SIZE = os.getenv("LOCAL_WORLD_SIZE",
-                                         str(parallel_config.world_size))
-        os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
-        os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
-        os.environ["LOCAL_RANK"] = str(local_rank)
-        init_distributed_environment(
-            world_size=parallel_config.world_size,
-            rank=rank,
-            distributed_init_method=distributed_init_method,
-            local_rank=local_rank,
-            backend=XPU_CCL_BACKEND)
+    default_backend = "xccl" if supports_xccl() else "ccl"
+    XPU_CCL_BACKEND = os.getenv("XPU_CCL_BACKEND", default_backend)
+    ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
+    ENV_LOCAL_WORLD_SIZE = os.getenv("LOCAL_WORLD_SIZE",
+                                     str(parallel_config.world_size))
+    os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
+    os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
+    os.environ["LOCAL_RANK"] = str(local_rank)
+    init_distributed_environment(
+        world_size=parallel_config.world_size,
+        rank=rank,
+        distributed_init_method=distributed_init_method,
+        local_rank=local_rank,
+        backend=XPU_CCL_BACKEND)
 
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
     # global all_reduce needed for overall oneccl warm up
-    torch.distributed.all_reduce(torch.zeros(1).xpu())
+    tensor_model_parallel_all_reduce(torch.zeros(1).xpu())

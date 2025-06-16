@@ -144,7 +144,8 @@ class XPUPlatform(Platform):
             logger.warning(
                 "Please use spawn as start method if you want to use mp.")
         elif parallel_config.distributed_executor_backend != "ray" and \
-                parallel_config.distributed_executor_backend != "uni":
+                parallel_config.distributed_executor_backend != "uni" and \
+                parallel_config.distributed_executor_backend != "external_launcher":
             logger.warning(
                 "%s is not supported on XPU, fallback to ray distributed"
                 " executor backend.",
