@@ -703,10 +703,10 @@ class DPEngineCoreProc(EngineCoreProc):
         from vllm.platforms import current_platform
         device_control_env_var = current_platform.device_control_env_var
         world_size = vllm_config.parallel_config.world_size
-        os.environ[device_control_env_var] = ",".join(
-            str(current_platform.device_id_to_physical_device_id(i))
-            for i in range(local_dp_rank * world_size, (local_dp_rank + 1) *
-                           world_size))
+        # os.environ[device_control_env_var] = ",".join(
+        #     str(current_platform.device_id_to_physical_device_id(i))
+        #     for i in range(local_dp_rank * world_size, (local_dp_rank + 1) *
+        #                    world_size))
 
         self.dp_rank = dp_rank
         self.dp_group = vllm_config.parallel_config.stateless_init_dp_group()
@@ -779,11 +779,12 @@ class DPEngineCoreProc(EngineCoreProc):
             # 3) All-reduce operation to determine global unfinished reqs.
             self.engines_running = self._has_global_unfinished_reqs(
                 local_unfinished_reqs)
+            logger.info(f"engines _running {self.engines_running}")
 
             if not self.engines_running:
                 if self.dp_rank == 0:
                     # Notify client that we are pausing the loop.
-                    logger.debug("Wave %d finished, pausing engine loop.",
+                    logger.info("Wave %d finished, pausing engine loop.",
                                  self.current_wave)
                     self.output_queue.put_nowait(
                         EngineCoreOutputs(wave_complete=self.current_wave))

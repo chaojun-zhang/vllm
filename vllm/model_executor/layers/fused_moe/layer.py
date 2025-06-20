@@ -248,11 +248,10 @@ class FusedMoEMethodBase(QuantizeMethodBase):
 
     def init_prepare_finalize(self, moe: MoEConfig,
                               quant_config: Optional[QuantizationConfig]):
-        all2all_manager = get_ep_group().device_communicator.all2all_manager
-        assert all2all_manager is not None
-
         prepare_finalize = None
         if moe.use_pplx_kernels:
+            all2all_manager = get_ep_group().device_communicator.all2all_manager
+            assert all2all_manager is not None
             all_to_all_args = dict(
                 max_num_tokens=moe.max_num_tokens,
                 num_experts=moe.num_experts,
@@ -343,14 +342,13 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
 
         assert self.fused_experts == fused_experts
 
-        all2all_manager = get_ep_group().device_communicator.all2all_manager
-        assert all2all_manager is not None
-
         experts: Optional[FusedMoEPermuteExpertsUnpermute] = None
 
         if isinstance(prepare_finalize,
                       (BatchedPrepareAndFinalize, PplxPrepareAndFinalize)):
             logger.debug("BatchedTritonExperts %s", self.moe)
+            all2all_manager = get_ep_group().device_communicator.all2all_manager
+            assert all2all_manager is not None
             experts = BatchedTritonExperts(
                 max_num_tokens=MOE_DP_CHUNK_SIZE,
                 world_size=all2all_manager.world_size,

@@ -242,6 +242,8 @@ class GroupCoordinator:
         elif current_platform.is_out_of_tree():
             self.device = torch.device(
                 f"{current_platform.device_name}:{local_rank}")
+        elif current_platform.is_xpu():
+            self.device = torch.device("xpu")
         else:
             self.device = torch.device("cpu")
 
@@ -358,7 +360,9 @@ class GroupCoordinator:
             return self._all_reduce_out_place(input_)
 
     def _all_reduce_out_place(self, input_: torch.Tensor) -> torch.Tensor:
-        return self.device_communicator.all_reduce(input_)
+        import torch.distributed as dist
+        output =  self.device_communicator.all_reduce(input_)
+        return output
 
     def all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
         world_size = self.world_size
@@ -1155,6 +1159,14 @@ def get_tensor_model_parallel_rank():
     """Return my rank for the tensor model parallel group."""
     return get_tp_group().rank_in_group
 
+
+def get_data_parallel_rank():
+    """Return my rank for the tensor model parallel group."""
+    return get_dp_group().rank_in_group
+
+def get_data_parallel_world_size():
+    """Return my rank for the tensor model parallel group."""
+    return get_dp_group().world_size
 
 def destroy_model_parallel():
     """Set the groups to none and destroy them."""

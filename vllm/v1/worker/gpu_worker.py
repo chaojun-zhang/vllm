@@ -231,6 +231,7 @@ class Worker(WorkerBase):
         # warm up sizes that are not in cudagraph capture sizes,
         # but users still want to compile for better performance,
         # e.g. for the max-num-batched token size in chunked prefill.
+
         warmup_sizes = self.vllm_config.compilation_config.compile_sizes.copy()
         if not self.model_config.enforce_eager:
             warmup_sizes = [
@@ -251,13 +252,16 @@ class Worker(WorkerBase):
         if get_pp_group().is_last_rank:
             max_num_reqs = min(self.scheduler_config.max_num_seqs,
                                self.scheduler_config.max_num_batched_tokens)
+            logger.info("Compile and warming up model")
+            hidden_states = self.model_runner._dummy_run(
+                num_tokens=max_num_reqs)
             self.model_runner._dummy_sampler_run(
-                hidden_states=self.model_runner._dummy_run(
-                    num_tokens=max_num_reqs))
+                hidden_states)
 
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.model_config.seed)
+        logger.info("Compile and warming up model finish")
 
     def get_model(self) -> nn.Module:
         return self.model_runner.get_model()
@@ -267,6 +271,7 @@ class Worker(WorkerBase):
         self,
         scheduler_output: "SchedulerOutput",
     ) -> Optional[ModelRunnerOutput]:
+        logger.info("execute model starting")
         intermediate_tensors = None
         if not get_pp_group().is_first_rank:
             intermediate_tensors = IntermediateTensors(
@@ -294,6 +299,7 @@ class Worker(WorkerBase):
             self.profiler.stop()
 
     def execute_dummy_batch(self) -> None:
+        logger.info("execute dummy batch")
         self.model_runner._dummy_run(1)
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

@@ -198,7 +198,6 @@ class UnquantizedLinearMethod(LinearMethodBase):
               layer: torch.nn.Module,
               x: torch.Tensor,
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
-
         return dispatch_unquantized_gemm()(x, layer.weight, bias)
 
 
@@ -1289,12 +1288,11 @@ class RowParallelLinear(LinearBase):
                                                   input_parallel,
                                                   bias=bias_)
         if self.reduce_results and self.tp_size > 1:
+            import torch.distributed as dist
             output = tensor_model_parallel_all_reduce(output_parallel)
         else:
             output = output_parallel
-
         output_bias = self.bias if self.skip_bias_add else None
-
         if not self.return_bias:
             return output
         return output, output_bias

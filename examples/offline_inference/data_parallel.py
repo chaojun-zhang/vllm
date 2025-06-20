@@ -119,7 +119,7 @@ def main(
     llm = LLM(
         model=model,
         tensor_parallel_size=GPUs_per_dp_rank,
-        enforce_eager=enforce_eager,
+        enforce_eager=True,
         enable_expert_parallel=True,
         trust_remote_code=trust_remote_code,
     )
