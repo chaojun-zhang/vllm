@@ -31,8 +31,13 @@ def empty_fp32(*args, **kwargs):
     return torch.empty(*args, **kwargs, dtype=torch.float32, device="cuda")
 
 
-RMS_OP = torch.ops._C.rms_norm.default
-RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
+if current_platform.is_xpu():
+    from vllm._ipex_ops import ipex_ops as ops
+    RMS_OP = ops.rms_norm
+    RMS_ADD_OP = ops.fused_add_rms_norm
+else:
+    RMS_OP = torch.ops._C.rms_norm.default
+    RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
 
 
 class QuantKey(NamedTuple):
@@ -67,14 +72,17 @@ kFp8StaticTensorSym = QuantKey(FP8_DTYPE, True, GroupShape.PER_TENSOR, True)
 kFp8DynamicTensorSym = QuantKey(FP8_DTYPE, False, GroupShape.PER_TENSOR, True)
 kFp8DynamicTokenSym = QuantKey(FP8_DTYPE, False, GroupShape.PER_TOKEN, True)
 
-QUANT_OPS: dict[QuantKey, OpOverload] = {
-    kFp8StaticTensorSym:
-    torch.ops._C.static_scaled_fp8_quant.default,  # noqa: E501
-    kFp8DynamicTensorSym:
-    torch.ops._C.dynamic_scaled_fp8_quant.default,  # noqa: E501
-    kFp8DynamicTokenSym:
-    torch.ops._C.dynamic_per_token_scaled_fp8_quant.default,  # noqa: E501
-}
+if current_platform.is_xpu():
+    QUANT_OPS: dict[QuantKey, OpOverload] = {}
+else:
+    QUANT_OPS: dict[QuantKey, OpOverload] = {
+        kFp8StaticTensorSym:
+        torch.ops._C.static_scaled_fp8_quant.default,  # noqa: E501
+        kFp8DynamicTensorSym:
+        torch.ops._C.dynamic_scaled_fp8_quant.default,  # noqa: E501
+        kFp8DynamicTokenSym:
+        torch.ops._C.dynamic_per_token_scaled_fp8_quant.default,  # noqa: E501
+    }
 
 
 class FusedRMSQuantKey(NamedTuple):
@@ -91,16 +99,19 @@ class FusedRMSQuantKey(NamedTuple):
                 f"{'' if self.fused_add else 'out'} residual)")
 
 
-FUSED_OPS: dict[FusedRMSQuantKey, OpOverload] = {
-    FusedRMSQuantKey(kFp8StaticTensorSym, False):
-    torch.ops._C.rms_norm_static_fp8_quant.default,  # noqa: E501
-    FusedRMSQuantKey(kFp8StaticTensorSym, True):
-    torch.ops._C.fused_add_rms_norm_static_fp8_quant.default,  # noqa: E501
-    FusedRMSQuantKey(kFp8DynamicTokenSym, False):
-    torch.ops._C.rms_norm_dynamic_per_token_quant.default,  # noqa: E501
-    FusedRMSQuantKey(kFp8DynamicTokenSym, True):
-    torch.ops._C.rms_norm_dynamic_per_token_quant.default,  # noqa: E501
-}
+if current_platform.is_xpu():
+    FUSED_OPS: dict[FusedRMSQuantKey, OpOverload] = {}
+else:
+    FUSED_OPS: dict[FusedRMSQuantKey, OpOverload] = {
+        FusedRMSQuantKey(kFp8StaticTensorSym, False):
+        torch.ops._C.rms_norm_static_fp8_quant.default,  # noqa: E501
+        FusedRMSQuantKey(kFp8StaticTensorSym, True):
+        torch.ops._C.fused_add_rms_norm_static_fp8_quant.default,  # noqa: E501
+        FusedRMSQuantKey(kFp8DynamicTokenSym, False):
+        torch.ops._C.rms_norm_dynamic_per_token_quant.default,  # noqa: E501
+        FusedRMSQuantKey(kFp8DynamicTokenSym, True):
+        torch.ops._C.rms_norm_dynamic_per_token_quant.default,  # noqa: E501
+    }
 
 
 class QuantMultiOutputMatch(MultiOutputMatch):

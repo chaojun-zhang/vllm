@@ -13,7 +13,7 @@ from vllm.model_executor.models.llama import LlamaForCausalLM
 from vllm.platforms import current_platform
 from vllm.v1.spec_decode.eagle import EagleProposer
 
-model_dir = "meta-llama/Llama-3.1-8B-Instruct"
+model_dir = "unsloth/Llama-3.1-8B-Instruct"
 eagle_dir = "yuhuili/EAGLE-LLaMA3.1-Instruct-8B"
 eagle3_dir = "yuhuili/EAGLE3-LLaMA3.1-Instruct-8B"
 

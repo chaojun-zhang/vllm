@@ -50,7 +50,7 @@ def sampling_config():
 
 @pytest.fixture
 def model_name():
-    return "meta-llama/Llama-3.1-8B-Instruct"
+    return "unsloth/Llama-3.1-8B-Instruct"
 
 
 def eagle_model_name():

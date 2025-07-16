@@ -31,8 +31,13 @@ from vllm.platforms import current_platform
 logger = init_logger(__name__)
 
 ALLREDUCE_OP = torch.ops.vllm.all_reduce.default
-RMS_OP = torch.ops._C.rms_norm.default
-RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
+if current_platform.is_xpu():
+    from vllm._ipex_ops import ipex_ops as ops
+    RMS_OP = ops.rms_norm
+    RMS_ADD_OP = ops.fused_add_rms_norm
+else:
+    RMS_OP = torch.ops._C.rms_norm.default
+    RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
 
 
 class BasePattern:
