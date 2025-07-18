@@ -17,9 +17,9 @@ from vllm.platforms import current_platform
 from vllm.triton_utils import HAS_TRITON
 
 is_xpu = current_platform.is_xpu()
-use_triton_kernels = os.getenv("XPU_USE_TRITON_KERNELS", "0") == "1"
+xpu_use_triton_kernels = os.getenv("XPU_USE_TRITON_KERNELS", "0") == "1"
 
-if is_xpu and not use_triton_kernels:
+if is_xpu and not xpu_use_triton_kernels:
     from vllm._ipex_ops import ipex_ops
     try:
         lora_expand = ipex_ops.lora_expand
@@ -36,6 +36,8 @@ if is_xpu and not use_triton_kernels:
 elif HAS_TRITON:
     from vllm.lora.ops.triton_ops import (LoRAKernelMeta, lora_expand,
                                           lora_shrink)
+    if is_xpu:
+        XPU_KERNEL_V = 1
 
 from .punica_base import PunicaWrapperBase
 
