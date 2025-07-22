@@ -88,7 +88,6 @@ class XPUPlatform(Platform):
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cache_config = vllm_config.cache_config
-
         vllm_config.compilation_config.use_cudagraph = False
         if cache_config and cache_config.block_size is None:
             if envs.VLLM_USE_V1:
