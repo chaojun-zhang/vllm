@@ -420,7 +420,7 @@ class ipex_ops:
     #     ipex.llm.functional.lora_expand(inputs, lora_b_weights,
     #                                     output_tensor, token_lora_mapping,
     #                                     token_indices_sorted_by_lora_ids,
-    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     num_tokens_per_lora, num_tokens_per_lora, #no_qa
     #                                     lora_token_start_loc, lora_ids,
     #                                     offset_start, add_inputs)
 
