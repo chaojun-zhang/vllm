@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-
+import os
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -66,7 +66,11 @@ class XPUPlatform(Platform):
 
     @classmethod
     def get_punica_wrapper(cls) -> str:
-        return "vllm.lora.punica_wrapper.punica_gpu.PunicaWrapperGPU"
+        xpu_use_triton_kernels = os.getenv("XPU_USE_TRITON_KERNELS", "0") == "1"
+        if xpu_use_triton_kernels:
+            return "vllm.lora.punica_wrapper.punica_gpu.PunicaWrapperGPU"
+        else:
+            return "vllm.lora.punica_wrapper.punica_xpu.PunicaWrapperXPU"
 
     @classmethod
     def get_device_total_memory(cls, device_id: int = 0) -> int:

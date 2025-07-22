@@ -320,13 +320,20 @@ class ipex_ops:
         pass
 
     @staticmethod
-    def bgmv_expand(inputs: torch.Tensor,
+    def _bgmv_expand(inputs: torch.Tensor,
                     lora_b_weights: torch.Tensor,
                     output_tensor: torch.Tensor,
                     lora_indices_tensor: torch.Tensor,
                     add_inputs: bool = True) -> None:
         ipex.llm.functional.bgmv_expand(inputs, lora_b_weights, output_tensor,
                                         lora_indices_tensor, add_inputs)
+
+    def _bgmv_expand_fake(inputs: torch.Tensor,
+                    lora_b_weights: torch.Tensor,
+                    output_tensor: torch.Tensor,
+                    lora_indices_tensor: torch.Tensor,
+                    add_inputs: bool = True) -> None:
+        pass
 
     @staticmethod
     def _bgmv_expand_slice(inputs: torch.Tensor,
@@ -453,6 +460,15 @@ try:
     bgmv_shrink = torch.ops.vllm.bgmv_shrink
 
     direct_register_custom_op(
+        op_name="bgmv_expand",
+        op_func=ipex_ops._bgmv_expand,
+        mutates_args=["output_tensor"],
+        fake_impl=ipex_ops._bgmv_expand_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+    bgmv_expand = torch.ops.vllm.bgmv_expand
+
+    direct_register_custom_op(
         op_name="bgmv_expand_slice",
         op_func=ipex_ops._bgmv_expand_slice,
         mutates_args=["output_tensor"],
@@ -463,4 +479,5 @@ try:
 
 except AttributeError:
     bgmv_shrink = ipex_ops._bgmv_shrink
+    bgmv_expand = ipex_ops._bgmv_expand
     bgmv_expand_slice = ipex_ops._bgmv_expand_slice
