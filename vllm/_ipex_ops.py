@@ -446,7 +446,7 @@ try:
     direct_register_custom_op(
         op_name="bgmv_shrink",
         op_func=ipex_ops._bgmv_shrink,
-        mutates_args=["output_tensor", "lora_indices_tensor"],
+        mutates_args=["output_tensor"],
         fake_impl=ipex_ops._bgmv_shrink_fake,
         dispatch_key=current_platform.dispatch_key,
     )
