@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional, Union, final
 
 import torch
 
-from vllm._ipex_ops import bgmv_shrink, bgmv_expand, bgmv_expand_slice
+from vllm.lora.ops.ipex_ops import bgmv_expand, bgmv_expand_slice, bgmv_shrink
 from vllm.lora.layers import LoRAMapping
 from .punica_base import PunicaWrapperBase
 
@@ -31,6 +31,8 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         PunicaWrapperBase.__init__(self, max_num_batched_tokens, max_batches,
                                    device)
         torch._dynamo.mark_dynamic(self._token_lora_indices, 0)
+        torch._dynamo.mark_dynamic(self._embeddings_indices, 1)
+        torch._dynamo.mark_dynamic(self._sampler_indices_padded, 0)
 
     def update_metadata(
             self,
@@ -146,7 +148,7 @@ class PunicaWrapperXPU(PunicaWrapperBase):
                 add_inputs=add_inputs,
             )
             offset_start += output_slices[slice_idx]
-        y.view(y_org)
+        y.view_as(y_org)
 
 
     def add_lora_embedding(self,
@@ -261,6 +263,7 @@ class PunicaWrapperXPU(PunicaWrapperBase):
             scale (float): Scaling factor.
             buffer (Optional[torch.Tensor]): Default to None.
         """
+        y_org = y
         y = y.view(-1, y.shape[-1])
         x = x.view(-1, x.shape[-1])
         r = lora_b_stacked.size(-1)
@@ -277,4 +280,6 @@ class PunicaWrapperXPU(PunicaWrapperBase):
                     y,
                     self.sampler_indices,
                     add_inputs=True)
+        return y.view_as(y_org)
+
 
