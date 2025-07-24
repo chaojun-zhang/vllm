@@ -87,25 +87,18 @@ class XPUPlatform(Platform):
         cache_config = vllm_config.cache_config
         model_config = vllm_config.model_config
         compilation_config = vllm_config.compilation_config
-        # vllm_config.compilation_config.use_cudagraph=False
         # in V1(or with ipex chunked prefill) block_size is 64
         if cache_config and cache_config.block_size is None:
             cache_config.block_size = 64
 
-        from vllm.config import ModelConfig, VllmConfig, CompilationLevel
-        if os.environ.get("VLLM_XPU_CI_ENV", "0") != "0":
-            backend = "eager"
-        else:
-            backend = "inductor"
+        from vllm.config import CompilationLevel
 
-        compilation_config.backend = backend
-        compilation_config.level = CompilationLevel.PIECEWISE  # noqa: E501
-        # # FIXME: Temporarily forcing eager mode
-        # # remove after t.compile support stabilizes.
-        # if (envs.VLLM_USE_V1 and model_config is not None
-        #         and not vllm_config.model_config.enforce_eager):
-        #     from vllm.config import CompilationLevel
-        #     vllm_config.compilation_config.level = CompilationLevel.NO_COMPILATION  # noqa: E501
+        if compilation_config.level == CompilationLevel.PIECEWISE:
+            # cuda graph is not support on xpu platform,
+            # fallback to DYNAMO_ONCE
+            logger.warning(f"cuda graph is not support on XPU platform, "
+                           f"fall back to CompilationLevel.DYNAMO_ONCE")
+            compilation_config.level = CompilationLevel.DYNAMO_ONCE
 
         # Instances created using VllmConfig() typically have model_config as
         # None by default. The modification involves adding a check to prevent
@@ -115,11 +108,7 @@ class XPUPlatform(Platform):
                 bf16_supported = cls.device_support_bf16()
                 if not bf16_supported:
                     model_config.dtype = torch.float16
-            # if not model_config.enforce_eager:
-            #     logger.warning(
-            #         "CUDA graph is not supported on XPU, fallback to the eager "
-            #         "mode.")
-            #     model_config.enforce_eager = True
+
 
         # check and update parallel config
         parallel_config = vllm_config.parallel_config

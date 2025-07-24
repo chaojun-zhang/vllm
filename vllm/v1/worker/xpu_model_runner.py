@@ -28,8 +28,6 @@ class XPUModelRunner(GPUModelRunner):
 
     def _init_device_properties(self) -> None:
         self.num_sms = None
-        # self.device_properties = torch.xpu.get_device_properties(self.device)
-        # self.num_sms = self.device_properties.multi_processor_count
 
     def _sync_device(self) -> None:
         torch.xpu.synchronize()
