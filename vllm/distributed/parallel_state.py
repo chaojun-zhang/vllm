@@ -48,7 +48,7 @@ from vllm.utils import (direct_register_custom_op, get_distributed_init_method,
 
 @dataclass
 class GraphCaptureContext:
-    stream: torch.cuda.Stream
+    stream: torch.xpu.Stream
 
 
 TensorMetadata = namedtuple("TensorMetadata", ["device", "dtype", "size"])
@@ -313,7 +313,7 @@ class GroupCoordinator:
     def graph_capture(
             self, graph_capture_context: Optional[GraphCaptureContext] = None):
         if graph_capture_context is None:
-            stream = torch.cuda.Stream()
+            stream = torch.xpu.Stream()
             graph_capture_context = GraphCaptureContext(stream)
         else:
             stream = graph_capture_context.stream
@@ -331,11 +331,11 @@ class GroupCoordinator:
 
         # ensure all initialization operations complete before attempting to
         # capture the graph on another stream
-        curr_stream = torch.cuda.current_stream()
+        curr_stream = torch.xpu.current_stream()
         if curr_stream != stream:
             stream.wait_stream(curr_stream)
 
-        with torch.cuda.stream(stream), maybe_ca_context:
+        with torch.xpu.stream(stream), maybe_ca_context:
             yield graph_capture_context
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
@@ -919,7 +919,7 @@ def graph_capture(device: torch.device):
     in order to explicitly distinguish the kernels to capture
     from other kernels possibly launched on background in the default stream.
     """
-    context = GraphCaptureContext(torch.cuda.Stream(device=device))
+    context = GraphCaptureContext(torch.xpu.Stream(device=device))
     with get_tp_group().graph_capture(context), get_pp_group().graph_capture(
             context):
         yield context

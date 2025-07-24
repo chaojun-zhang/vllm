@@ -50,6 +50,9 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         self.prompt_mapping_meta = LoRAKernelMeta.make(self.max_loras,
                                                        max_num_prompts,
                                                        device=device)
+        # torch._dynamo.mark_dynamic(self._token_lora_indices, 0)
+        # torch._dynamo.mark_dynamic(self._embeddings_indices, 1)
+        # torch._dynamo.mark_dynamic(self._sampler_indices_padded, 0)
 
     def update_metadata(self, mapping: LoRAMapping,
                         lora_index_to_id: list[Optional[int]], max_loras: int,

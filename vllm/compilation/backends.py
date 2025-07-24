@@ -33,13 +33,13 @@ def make_compiler(compilation_config: CompilationConfig) -> CompilerInterface:
     if compilation_config.use_inductor:
         if envs.VLLM_USE_STANDALONE_COMPILE and is_torch_equal_or_newer(
                 "2.8.0.dev"):
-            logger.debug("Using InductorStandaloneAdaptor")
+            logger.info("Using InductorStandaloneAdaptor")
             return InductorStandaloneAdaptor()
         else:
-            logger.debug("Using InductorAdaptor")
+            logger.info("Using InductorAdaptor")
             return InductorAdaptor()
     else:
-        logger.debug("Using EagerAdaptor")
+        logger.info("Using EagerAdaptor")
         return EagerAdaptor()
 
 
@@ -414,8 +414,8 @@ class VllmBackend:
         self.prefix = prefix or model_tag
 
         global global_graph_pool
-        if global_graph_pool is None:
-            global_graph_pool = current_platform.graph_pool_handle()
+        # if global_graph_pool is None:
+        #     global_graph_pool = current_platform.graph_pool_handle()
 
         # TODO: in the future, if we want to use multiple
         # streams, it might not be safe to share a global pool.
