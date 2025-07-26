@@ -97,24 +97,18 @@ class XPUPlatform(Platform):
 
         # FIXME: Temporarily forcing eager mode
         # remove after t.compile support stabilizes.
-        if (envs.VLLM_USE_V1 and model_config is not None
-                and not vllm_config.model_config.enforce_eager):
-            from vllm.config import CompilationLevel
-            vllm_config.compilation_config.level = CompilationLevel.NO_COMPILATION  # noqa: E501
 
         # Instances created using VllmConfig() typically have model_config as
         # None by default. The modification involves adding a check to prevent
         # potential null exceptions check and update model config.
-        if model_config is not None:
-            if model_config.dtype == torch.bfloat16:
-                bf16_supported = cls.device_support_bf16()
-                if not bf16_supported:
-                    model_config.dtype = torch.float16
-            if not model_config.enforce_eager:
-                logger.warning(
-                    "CUDA graph is not supported on XPU, fallback to the eager "
-                    "mode.")
-                model_config.enforce_eager = True
+        if (model_config is not None and model_config.dtype == torch.bfloat16
+                and not cls.device_support_bf16()):
+            model_config.dtype = torch.float16
+        # if not model_config.enforce_eager:
+        #     logger.warning(
+        #         "CUDA graph is not supported on XPU, fallback to the eager "
+        #         "mode.")
+        #     model_config.enforce_eager = True
 
         # check and update parallel config
         parallel_config = vllm_config.parallel_config

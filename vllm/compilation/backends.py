@@ -24,6 +24,7 @@ from .compiler_interface import (CompilerInterface, EagerAdaptor,
                                  InductorAdaptor, InductorStandaloneAdaptor)
 from .counter import compilation_counter
 from .inductor_pass import InductorPass
+
 if not current_platform.is_xpu():
     from .pass_manager import PostGradPassManager
 
@@ -424,7 +425,8 @@ class VllmBackend:
         self.graph_pool = global_graph_pool
 
         # Passes to run on the graph post-grad.
-        self.post_grad_pass_manager = PostGradPassManager()
+        if not current_platform.is_xpu():
+            self.post_grad_pass_manager = PostGradPassManager()
 
         self.sym_tensor_indices = []
         self.input_buffers = []
@@ -440,6 +442,8 @@ class VllmBackend:
 
     def configure_post_pass(self):
         config = self.compilation_config
+        if current_platform.is_xpu():
+            return
         self.post_grad_pass_manager.configure(self.vllm_config)
 
         # Post-grad custom passes are run using the post_grad_custom_post_pass
