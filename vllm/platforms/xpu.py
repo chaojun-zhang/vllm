@@ -206,3 +206,29 @@ class XPUPlatform(Platform):
     @classmethod
     def device_count(cls) -> int:
         return torch.xpu.device_count()
+
+    @classmethod
+    def synchronize(cls) -> None:
+        return torch.xpu.synchronize()
+
+    @classmethod
+    def get_device_uuid(cls, device_id: int = 0) -> str:
+        import os
+        physical_device_id = str(device_id)
+        if cls.device_control_env_var in os.environ:
+            if ":" in os.environ[cls.device_control_env_var]:
+                device_ids = os.environ[cls.device_control_env_var].split(
+                    ":")[1].split(",")
+            else:
+                device_ids = os.environ[cls.device_control_env_var].split(",")
+            if device_ids == [""]:
+                msg = (f"{cls.device_control_env_var} is set to empty string, "
+                       "which means current platform support is disabled. If "
+                       "you are using ray, please unset the environment "
+                       f"variable `{cls.device_control_env_var}` inside the "
+                       "worker/actor. Check "
+                       "https://github.com/vllm-project/vllm/issues/8402 for "
+                       "more information.")
+                raise RuntimeError(msg)
+            physical_device_id = device_ids[device_id]
+        return 'intel-simulated-uuid-gpu-' + physical_device_id
