@@ -447,8 +447,11 @@ def _cuda_device_count_stateless(cuda_visible_devices: str | None = None) -> int
 
     from vllm.platforms import current_platform
 
+    if current_platform.is_xpu():
+        return torch.xpu.device_count()
     if not torch.cuda._is_compiled():
         return 0
+
     if current_platform.is_rocm():
         # ROCm uses amdsmi instead of nvml for stateless device count
         # This requires a sufficiently modern version of Torch 2.4.0
