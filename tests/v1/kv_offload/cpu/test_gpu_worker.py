@@ -89,7 +89,7 @@ def test_transfer(
     )
 
     mmap_region: SharedOffloadRegion | None = None
-    if use_shared_memory:
+    if use_shared_memory and current_platform.is_cuda():
         cpu_page_size = gpu_page_size_bytes * num_tensors * block_size_factor
         mmap_region = SharedOffloadRegion(
             instance_id=str(uuid.uuid4()),

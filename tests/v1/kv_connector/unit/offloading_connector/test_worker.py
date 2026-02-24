@@ -31,6 +31,7 @@ BLOCK_SIZE = 16
 NUM_KV_HEADS = 4
 HEAD_SIZE = 64
 DTYPE = torch.float16
+DEVICE_TYPE = current_platform.device_type
 
 # Attention backends to test
 ATTN_BACKENDS: list[str] = []
@@ -43,6 +44,8 @@ if current_platform.is_cuda():
     ]
 elif current_platform.is_rocm():
     ATTN_BACKENDS = ["TRITON_ATTN"]
+elif current_platform.is_xpu():
+    ATTN_BACKENDS = ["TRITON_ATTN", "FLASH_ATTN"]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -284,7 +287,7 @@ def test_register_kv_caches(mock_get_layers, backend):
     kv_caches = _allocate_and_reshape_kv_caches(
         kv_cache_config,
         attn_groups,
-        device=torch.device("cuda:0"),
+        device=torch.device(f"{DEVICE_TYPE}:0"),
     )
 
     mock_layers: dict[str, MagicMock] = {}
@@ -438,7 +441,7 @@ def test_register_kv_caches_uniform_type(mock_get_layers, backend):
     kv_caches = _allocate_and_reshape_kv_caches(
         kv_cache_config,
         attn_groups,
-        device=torch.device("cuda:0"),
+        device=torch.device(f"{DEVICE_TYPE}:0"),
     )
 
     mock_get_layers.return_value = {
