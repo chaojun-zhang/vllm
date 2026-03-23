@@ -11,6 +11,8 @@ current_platform.import_kernels()
 CUDA_ALIKE = current_platform.is_cuda_alike()
 """Most kernels in this file are supported on all CUDA-alike platforms."""
 
+GPGPU_DEVICE = CUDA_ALIKE or current_platform.is_xpu()
+
 rms_no_var_size = (
     lambda x, weight, epsilon, variance_size=None: variance_size is None
     and (weight is None or weight.dtype == x.dtype)
@@ -33,7 +35,7 @@ def rms_norm(
     return output
 
 
-@ir.ops.gelu_and_mul.register_impl("vllm_c", supported=CUDA_ALIKE)
+@ir.ops.gelu_and_mul.register_impl("vllm_c", supported=GPGPU_DEVICE)
 def gelu_and_mul(x: Tensor, approximate: str = "none") -> Tensor:
     """
     GeGLU activation function: GELU(x[:d]) * x[d:] using vLLM C++ kernel.
@@ -57,7 +59,7 @@ def gelu_and_mul(x: Tensor, approximate: str = "none") -> Tensor:
 #===================
 
 
-@ir.ops.gelu_new.register_impl("vllm_c", supported=CUDA_ALIKE)
+@ir.ops.gelu_new.register_impl("vllm_c", supported=GPGPU_DEVICE)
 def gelu_new(x: Tensor) -> Tensor:
     """
     New GELU activation function using vLLM C++ kernel.
@@ -69,7 +71,7 @@ def gelu_new(x: Tensor) -> Tensor:
     return out
 
 
-@ir.ops.gelu_fast.register_impl("vllm_c", supported=CUDA_ALIKE)
+@ir.ops.gelu_fast.register_impl("vllm_c", supported=GPGPU_DEVICE)
 def gelu_fast(x: Tensor) -> Tensor:
     """
     Fast GELU activation function using vLLM C++ kernel.
@@ -81,7 +83,7 @@ def gelu_fast(x: Tensor) -> Tensor:
     return out
 
 
-@ir.ops.quick_gelu.register_impl("vllm_c", supported=CUDA_ALIKE)
+@ir.ops.quick_gelu.register_impl("vllm_c", supported=GPGPU_DEVICE)
 def quick_gelu(x: Tensor) -> Tensor:
     """
     Quick GELU activation function using vLLM C++ kernel.
