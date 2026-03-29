@@ -15,7 +15,7 @@ from vllm.distributed.parallel_state import (
 from vllm.distributed.utils import divide
 from vllm.lora.layers.base import BaseLayerWithLoRA
 from vllm.lora.ops.triton_ops.utils import get_lora_op_configs
-from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.fused_moe import FusedMoE, XPUExperts
 from vllm.model_executor.layers.fused_moe.config import (
     _get_config_dtype_str,
 )
@@ -37,6 +37,7 @@ from vllm.model_executor.layers.fused_moe.modular_kernel import (
 from vllm.model_executor.layers.fused_moe.prepare_finalize import (
     MoEPrepareAndFinalizeNoDPEPModular,
 )
+from vllm.platforms import current_platform
 
 from .utils import _get_lora_device, try_get_optimal_moe_lora_config
 
@@ -161,7 +162,10 @@ class FusedMoEWithLoRA(BaseLayerWithLoRA):
                 (MarlinExperts, UnfusedOAITritonExperts),
             )
         else:
-            assert isinstance(m_fused_moe_fn.impl.fused_experts, TritonExperts)
+            if current_platform.is_xpu():
+                assert isinstance(m_fused_moe_fn.impl.fused_experts, XPUExperts)
+            else:
+                assert isinstance(m_fused_moe_fn.impl.fused_experts, TritonExperts)
 
         def fwd_decorator(layer, func):
             def wrapper(*args, **kwargs):

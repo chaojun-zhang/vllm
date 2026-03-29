@@ -73,12 +73,22 @@ def test_worker_apply_lora(qwen3_lora_files):
             max_lora_rank=8, max_cpu_loras=NUM_LORAS, max_loras=NUM_LORAS
         ),
     )
-    worker = Worker(
-        vllm_config=vllm_config,
-        local_rank=0,
-        rank=0,
-        distributed_init_method=f"file://{tempfile.mkstemp()[1]}",
-    )
+    if current_platform.is_xpu():
+        from vllm.v1.worker.xpu_worker import XPUWorker
+
+        worker = XPUWorker(
+            vllm_config=vllm_config,
+            local_rank=0,
+            rank=0,
+            distributed_init_method=f"file://{tempfile.mkstemp()[1]}",
+        )
+    else:
+        worker = Worker(
+            vllm_config=vllm_config,
+            local_rank=0,
+            rank=0,
+            distributed_init_method=f"file://{tempfile.mkstemp()[1]}",
+        )
 
     with set_current_vllm_config(vllm_config):
         worker.init_device()

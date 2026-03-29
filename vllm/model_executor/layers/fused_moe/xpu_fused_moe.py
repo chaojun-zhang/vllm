@@ -3,6 +3,7 @@
 import torch
 
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
+from vllm import _custom_ops as ops
 from vllm.model_executor.layers.fused_moe.activation import MoEActivation
 from vllm.model_executor.layers.fused_moe.config import (
     FusedMoEConfig,
@@ -40,6 +41,9 @@ class XPUExperts(mk.FusedMoEExpertsModular):
         )
         self.is_fp8 = False
         self.is_mxfp4 = False
+
+    def moe_sum(self, input: torch.Tensor, output: torch.Tensor) -> None:
+        ops.moe_sum(input, output)
 
     @property
     def expects_unquantized_inputs(self) -> bool:
