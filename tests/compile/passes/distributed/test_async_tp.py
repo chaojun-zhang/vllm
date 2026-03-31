@@ -226,7 +226,105 @@ class TestAGCutlassScaledMMModel(_BaseScaledMMModel):
         return [torch.ops.symm_mem.fused_all_gather_scaled_matmul.default]
 
 
+# ---------------------------------------------------------------------------
+# XPU fp8_gemm (W8A8) patterns
+# ---------------------------------------------------------------------------
+
+class _BaseXPUFp8GEMMModel(torch.nn.Module):
+    """Base class for XPU fp8_gemm AsyncTP pattern tests.
+
+    weight is stored column-major to match process_weights_after_loading
+    which does layer.weight.data.t().
+    """
+
+    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        self.weight = (
+            torch.empty([hidden_size, hidden_size], dtype=torch.float8_e4m3fn)
+            .contiguous()
+            .transpose(0, 1)
+        )
+        # per-tensor scales (scalar)
+        self.scale_a = torch.ones(1, dtype=torch.float32)
+        self.scale_b = torch.ones(1, dtype=torch.float32)
+
+
+class TestXPUFp8GEMMRSModel(_BaseXPUFp8GEMMModel):
+    """XPU: fp8_gemm + reduce_scatter → fused_scaled_matmul_reduce_scatter."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_fp8 = x.to(torch.float8_e4m3fn)
+        out = torch.ops._xpu_C.fp8_gemm(
+            x_fp8, self.weight, self.dtype, self.scale_a, self.scale_b, None
+        )
+        return tensor_model_parallel_reduce_scatter(out, dim=0)
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.reduce_scatter.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.patched_fused_scaled_matmul_reduce_scatter.default]
+
+
+class TestAGXPUFp8GEMMModel(_BaseXPUFp8GEMMModel):
+    """XPU: all_gather + fp8_gemm → fused_all_gather_scaled_matmul."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_fp8 = x.to(torch.float8_e4m3fn)
+        gathered = tensor_model_parallel_all_gather(x_fp8, dim=0)
+        scale_a = torch.ones(gathered.shape[0], 1, dtype=torch.float32)
+        return torch.ops._xpu_C.fp8_gemm(
+            gathered, self.weight, self.dtype, scale_a, self.scale_b, None
+        )
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_gather.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.symm_mem.fused_all_gather_scaled_matmul.default]
+
+
 @multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize(
+    "test_model",
+    [
+        TestXPUFp8GEMMRSModel,
+        TestAGXPUFp8GEMMModel,
+    ],
+)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+@pytest.mark.parametrize("hidden_size", [16])
+@pytest.mark.parametrize("dynamic", [True, False])
+@pytest.mark.skipif(
+    envs.VLLM_TARGET_DEVICE not in ["xpu"],
+    reason="XPU fp8_gemm AsyncTP patterns only run on XPU",
+)
+def test_async_tp_pass_replace_xpu_fp8(
+    test_model,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dynamic: bool,
+):
+    """Test that XPU fp8_gemm + collective ops are fused by AsyncTPPass."""
+    num_processes = 2
+
+    torch.multiprocessing.spawn(
+        async_tp_pass_on_test_model,
+        args=(
+            num_processes,
+            test_model,
+            batch_size,
+            seq_len,
+            hidden_size,
+            torch.bfloat16,  # XPU fp8_gemm output must be bfloat16
+            dynamic,
+        ),
+        nprocs=num_processes,
+    )
 @pytest.mark.parametrize(
     "test_model",
     [

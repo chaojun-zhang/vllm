@@ -68,9 +68,18 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        weight = layer.weight
-        weight_scale = layer.weight_scale
-        return torch.ops._xpu_C.fp8_gemm_w8a16(x, weight, weight_scale, bias)
+        w, w_s, x_s, _ = self._get_layer_params(layer)
+        out_dtype = x.dtype if self.config.out_dtype is None else self.config.out_dtype
+        output_shape = [*x.shape[:-1], w.shape[1]]
+        return self.apply_scaled_mm(
+            A=x.view(-1, x.shape[-1]),
+            B=w,
+            out_dtype=out_dtype,
+            As=x_s,
+            Bs=w_s,
+            bias=bias,
+            output_shape=output_shape,
+        )
 
     def apply_scaled_mm(
         self,
@@ -78,9 +87,13 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
         A: torch.Tensor,
         B: torch.Tensor,
         out_dtype: torch.dtype,
-        As: torch.Tensor,
+        As: torch.Tensor | None,
         Bs: torch.Tensor,
         bias: torch.Tensor | None,
         output_shape: list,
     ) -> torch.Tensor:
-        pass
+        if A.dtype == self.fp8_dtype:
+            result = torch.ops._xpu_C.fp8_gemm(A, B, out_dtype, As, Bs, bias)
+        else:
+            result = torch.ops._xpu_C.fp8_gemm_w8a16(A, B, Bs, bias)
+        return result.view(*output_shape)

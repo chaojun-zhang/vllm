@@ -677,6 +677,140 @@ class AllGatherCutlassScaledMMPattern(BasePattern):
         )
 
 
+class XPUFp8GEMMReduceScatterPattern(BasePattern):
+    def get_inputs(self) -> list[torch.Tensor]:
+        inp = torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
+        mm_weight = (
+            torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
+            .contiguous()
+            .transpose(0, 1)
+        )
+        scale_a = torch.empty([16, 1], device=self.device, dtype=torch.float32)
+        scale_b = torch.empty([1, 16], device=self.device, dtype=torch.float32)
+        return [inp, mm_weight, scale_a, scale_b]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            inp: torch.Tensor,
+            weight: torch.Tensor,
+            scale_a: torch.Tensor,
+            scale_b: torch.Tensor,
+        ) -> torch.Tensor:
+            mm = torch.ops._xpu_C.fp8_gemm.default(
+                inp, weight, self.dtype, scale_a, scale_b, None
+            )
+            return torch.ops.vllm.reduce_scatter.default(
+                mm,
+                dim=0,
+                world_size=self.tp_size,
+                group_name=self.tp.unique_name,
+            )
+
+        def replacement(
+                input: torch.Tensor,
+                mat2: torch.Tensor,
+                scale_a: torch.Tensor,
+                scale_b: torch.Tensor,
+        ) -> torch.Tensor:
+            # fused_scaled_matmul_reduce_scatter (via aten._scaled_mm) requires
+            # 2D scale tensors for non-tensorwise (per-token/per-channel) scaling.
+            # fp8_gemm accepts 1D scales, so reshape here if needed.
+            if scale_a.dim() == 1:
+                scale_a = scale_a.view(-1, 1)
+            if scale_b.dim() == 1:
+                scale_b = scale_b.view(1, -1)
+            # Calculate output shape: input @ mat2 with scatter_dim reduced
+            output_shape = [*input.shape[:-1], mat2.shape[1]]
+            scatter_dim = 0
+            gemm_rs = torch.ops.vllm.patched_fused_scaled_matmul_reduce_scatter(
+                input,
+                mat2,
+                scale_a,
+                scale_b,
+                "sum",
+                scatter_dim,  # orig_scatter_dim
+                scatter_dim,  # scatter_dim_after_maybe_reshape
+                self.tp.device_group.group_name,
+                output_shape,
+                None,  # bias
+                None,  # result_scale
+                self.dtype,  # out_dtype
+                False,  # use_fast_accum
+            )
+
+            return gemm_rs
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
+class AllGatherXPUFp8GEMMPattern(BasePattern):
+    """XPU: fuse all_gather + _xpu_C.fp8_gemm into
+    symm_mem.fused_all_gather_scaled_matmul."""
+
+    def get_inputs(self) -> list[torch.Tensor]:
+        x = torch.empty([8, 16], device=self.device, dtype=FP8_DTYPE)
+        weight = (
+            torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
+            .contiguous()
+            .transpose(0, 1)
+        )
+
+        s1 = x.shape[0] * self.tp_size
+
+        scale_a = torch.empty([s1, 1], device=self.device, dtype=torch.float32)
+        scale_b = torch.empty([1, 16], device=self.device, dtype=torch.float32)
+
+        return [x, weight, scale_a, scale_b]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            x: torch.Tensor,
+            weight: torch.Tensor,
+            scale_a: torch.Tensor,
+            scale_b: torch.Tensor,
+        ) -> torch.Tensor:
+            all_gather = torch.ops.vllm.all_gather.default(
+                x, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+            )
+
+            return torch.ops._xpu_C.fp8_gemm.default(
+                all_gather, weight, self.dtype, scale_a, scale_b, None
+            )
+
+        def replacement(
+            x: torch.Tensor,
+            weight: torch.Tensor,
+            scale_a: torch.Tensor,
+            scale_b: torch.Tensor,
+        ) -> torch.Tensor:
+            # fused_all_gather_scaled_matmul (via aten._scaled_mm) requires 2D
+            # scale tensors for non-tensorwise scaling.  fp8_gemm accepts 1D
+            # scales, so reshape here if needed.
+            if scale_a.dim() == 1:
+                scale_a = scale_a.view(-1, 1)
+            if scale_b.dim() == 1:
+                scale_b = scale_b.view(1, -1)
+            ag_output, mm_outputs = torch.ops.symm_mem.fused_all_gather_scaled_matmul(  # noqa
+                x,
+                [weight],
+                scale_a,
+                [scale_b],
+                gather_dim=0,
+                biases=[None],
+                result_scales=[None],
+                out_dtypes=[self.dtype],
+                use_fast_accum=[False],
+                group_name=self.tp.device_group.group_name,
+            )
+            return mm_outputs
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
 class FlashInferBMMFP8ReduceScatterPattern(
     BasePattern, VllmPatternReplacement[..., torch.Tensor]
 ):
@@ -962,6 +1096,14 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
                 # path; reduce-scatter needs a dedicated FP4 producer rather
                 # than the existing FP8-style helper.
 
+            if current_platform.is_xpu():
+                XPUFp8GEMMReduceScatterPattern(
+                    self.model_dtype, self.device
+                ).register(self.pm_pass)
+                AllGatherXPUFp8GEMMPattern(
+                    self.model_dtype, self.device
+                ).register(self.pm_pass)
+
         self.dump_patterns(config, self.pm_pass)
 
     def is_applicable_for_range(self, compile_range: Range) -> bool:
@@ -977,4 +1119,4 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
     def __call__(self, graph: fx.Graph) -> None:
         self.matched_count = self.pm_pass.apply(graph)
         VllmPatternMatcherPass.match_table[self.pass_name] += self.matched_count
-        logger.debug("Replaced %s patterns", self.matched_count)
+        logger.info("Replaced %s patterns", self.matched_count)
