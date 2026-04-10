@@ -569,6 +569,15 @@ class CudaPlatformBase(Platform):
             else ["vllm_c", "triton_batch_invariant", "native"]
         )
 
+        rotary_embedding = (
+            ["vllm_c", "native"]
+            if (
+                cc.is_custom_op_enabled("rotary_embedding")
+                or cc.pass_config.enable_qk_norm_rope_fusion
+            )
+            else list(default)
+        )
+
         # Use oink if enabled for rms_norm
         # TODO(Laurawly/luka): remove this env var,
         #  users can just use IR op priority directly
@@ -576,7 +585,10 @@ class CudaPlatformBase(Platform):
             rms_norm = ["oink"] + rms_norm
 
         return IrOpPriorityConfig.with_default(
-            default, rms_norm=rms_norm, fused_add_rms_norm=rms_norm
+            default,
+            rms_norm=rms_norm,
+            fused_add_rms_norm=rms_norm,
+            rotary_embedding=rotary_embedding,
         )
 
 
