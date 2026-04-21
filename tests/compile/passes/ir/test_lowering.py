@@ -67,3 +67,62 @@ def test_lowering_rms_norm(rms_provider, default_vllm_config):
 
     torch.testing.assert_close(output_unlowered, output)
     torch.testing.assert_close(output_unlowered, output2)
+
+
+class RMSNormGatedModel(nn.Module):
+    def __init__(self, hidden_size=128, dtype=torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.weight = torch.ones(hidden_size, dtype=dtype)
+        self.bias = torch.zeros(hidden_size, dtype=dtype)
+
+    def forward(self, x, z):
+        x1 = x + 4.0
+        # op 1: basic call with z, bias=None — dispatches to provider
+        x2 = ops.rms_norm_gated(x1, self.weight, None, z, 1e-5, None, False, "swish")
+        x3 = x2 * 5.0
+        # op 2: with bias — dispatches to provider
+        x4 = ops.rms_norm_gated(
+            x3, self.weight, self.bias, z, 1e-5, None, False, "swish"
+        )
+        x5 = x4 / 2.0
+        # op 3: z=None — dispatches to provider (triton supports all args)
+        x6 = ops.rms_norm_gated(x5, self.weight, None, None, 1e-5, None, False, "swish")
+        return x6 + 3.0
+
+
+@pytest.mark.parametrize("rms_gated_provider", ops.rms_norm_gated.supported_providers())
+def test_lowering_rms_norm_gated(rms_gated_provider, default_vllm_config):
+    torch.set_default_device(current_platform.device_type)
+
+    lowering_pass = VllmIRLoweringPass(get_current_vllm_config())
+    backend = TestBackend(lowering_pass)
+    backend_unlowered = TestBackend()
+
+    model = RMSNormGatedModel()
+    torch.manual_seed(0)
+    x = torch.randn(8, model.hidden_size, dtype=torch.bfloat16)
+    z = torch.randn(8, model.hidden_size, dtype=torch.bfloat16)
+    with (
+        ops.rms_norm_gated.set_priority([rms_gated_provider, "native"]),
+        ir.enable_torch_wrap(True),
+    ):
+        compiled_model = torch.compile(model, backend=backend, fullgraph=True)
+        compiled_unlowered_model = torch.compile(
+            model, backend=backend_unlowered, fullgraph=True
+        )
+        output = compiled_model(x, z)
+        output_unlowered = compiled_unlowered_model(x, z)
+
+    selected = lowering_pass.selected_impls["rms_norm_gated"]
+    assert len(selected) == 3
+    assert selected["rms_norm_gated"] == rms_gated_provider
+    assert selected["rms_norm_gated_1"] == rms_gated_provider
+    assert selected["rms_norm_gated_2"] == rms_gated_provider
+
+    # Compiled function guards on global value, avoid recompilation
+    with ir.enable_torch_wrap(True):
+        output2 = compiled_model(x, z)
+
+    torch.testing.assert_close(output_unlowered, output, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(output_unlowered, output2, atol=1e-2, rtol=1e-2)
