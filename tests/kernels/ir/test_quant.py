@@ -81,7 +81,7 @@ def test_dynamic_group_quant_fp8_registration():
         "native": True,
         "vllm_c": IS_CUDA,
         "aiter": IS_ROCM,
-        "triton": IS_CUDA_ALIKE,
+        "triton": IS_GPGPU,
         "xpu_kernels": IS_XPU,
     }
     actual = {

@@ -8,7 +8,7 @@ from vllm.ir.ops.quant import get_fp8_min_max, make_group_quant_scales
 from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 
-TRITON_SUPPORTED = current_platform.is_cuda_alike()
+TRITON_SUPPORTED = current_platform.is_cuda_alike() or current_platform.is_xpu()
 
 
 @triton.jit

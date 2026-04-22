@@ -335,9 +335,15 @@ class XPUPlatform(Platform):
         cc = vllm_config.compilation_config
         using_inductor = cc.backend == "inductor" and cc.mode != CompilationMode.NONE
         default = ["native"] if using_inductor else ["xpu_kernels", "vllm_c", "native"]
+        dynamic_group_quant_fp8 = (
+            ["triton", "native"]
+            if using_inductor
+            else ["xpu_kernels", "triton", "native"]
+        )
 
         return IrOpPriorityConfig.with_default(
             default,
+            dynamic_group_quant_fp8=dynamic_group_quant_fp8,
         )
 
     @classmethod
