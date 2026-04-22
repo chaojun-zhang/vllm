@@ -321,8 +321,11 @@ class XPUPlatform(Platform):
         cc = vllm_config.compilation_config
         using_inductor = cc.backend == "inductor" and cc.mode != CompilationMode.NONE
         default = ["native"] if using_inductor else ["xpu_kernels", "native"]
+        fused_add_rms_norm = ["native"] if using_inductor else ["vllm_c", "native"]
 
-        return IrOpPriorityConfig.with_default(default)
+        return IrOpPriorityConfig.with_default(
+            default, fused_add_rms_norm=fused_add_rms_norm
+        )
 
     @classmethod
     def device_count(cls) -> int:

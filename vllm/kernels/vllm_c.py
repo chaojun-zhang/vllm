@@ -11,6 +11,8 @@ current_platform.import_kernels()
 CUDA_ALIKE = current_platform.is_cuda_alike()
 """Most kernels in this file are supported on all CUDA-alike platforms."""
 
+GPGPU_DEVICE = CUDA_ALIKE or current_platform.is_xpu()
+
 rms_no_var_size = (
     lambda x, weight, epsilon, variance_size=None: variance_size is None
     and (weight is None or weight.dtype == x.dtype)
@@ -42,7 +44,7 @@ rms_add_no_var_size = (
 @ir.ops.fused_add_rms_norm.register_impl(
     "vllm_c",
     supports_args=rms_add_no_var_size,
-    supported=CUDA_ALIKE,
+    supported=GPGPU_DEVICE,
     inplace=True,
 )
 def fused_add_rms_norm(

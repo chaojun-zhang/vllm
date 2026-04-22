@@ -42,6 +42,16 @@ def test_rms_norm_registration():
     assert actual == expected
 
 
+@pytest.mark.skipif(
+    not current_platform.is_cuda_alike() and not current_platform.is_xpu(),
+    reason="Currently only kernels on CUDA, ROCm and XPU",
+)
+def test_fused_add_rms_norm_vllm_c_registration():
+    assert ir.ops.fused_add_rms_norm.impls["vllm_c"].supported == (
+        current_platform.is_cuda_alike() or current_platform.is_xpu()
+    )
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize("n_tokens", [1, 8, 17])
 @pytest.mark.parametrize("hidden_size", [16, 4096, 8192])
@@ -74,7 +84,7 @@ class TestRMSNorm:
         out4 = rms_norm_native(x, None, epsilon=epsilon)
         torch.testing.assert_close(out3, out4)
 
-    @pytest.mark.parametrize("provider", vllm.ir.ops.rms_norm.supported_providers())
+    @pytest.mark.parametrize("provider", ir.ops.rms_norm.supported_providers())
     def test_impls(self, dtype, n_tokens, hidden_size, epsilon, provider):
         impl = ir.ops.rms_norm.impls[provider]
         assert impl.supported, (
