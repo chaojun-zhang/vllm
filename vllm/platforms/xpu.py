@@ -213,6 +213,24 @@ class XPUPlatform(Platform):
                     "falling back to PIECEWISE graph mode on XPU platform."
                 )
 
+        from vllm.config import CompilationMode
+        from vllm.distributed.parallel_state import set_custom_all_reduce
+
+        use_eager_mode = (
+            vllm_config.model_config.enforce_eager
+            or compilation_config.mode == CompilationMode.NONE
+        )
+        if parallel_config.disable_custom_all_reduce != use_eager_mode:
+            mode = "eager" if use_eager_mode else "compile"
+            logger.warning(
+                "disable_custom_all_reduce will be set to %s on XPU platform when running in %s mode.",
+                use_eager_mode,
+                mode,
+            )
+            parallel_config.disable_custom_all_reduce = use_eager_mode
+
+        set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
+
         # Disable fusion passes not yet supported on XPU.
         pass_config = compilation_config.pass_config
         fusion_passes_to_disable = {
@@ -409,3 +427,9 @@ class XPUPlatform(Platform):
     @classmethod
     def num_compute_units(cls, device_id: int = 0) -> int:
         return torch.xpu.get_device_properties(device_id).max_compute_units
+
+    @classmethod
+    def use_custom_op_collectives(cls) -> bool:
+        from vllm.distributed.parallel_state import _ENABLE_CUSTOM_ALL_REDUCE
+
+        return _ENABLE_CUSTOM_ALL_REDUCE
