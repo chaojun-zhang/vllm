@@ -707,10 +707,10 @@ class XPUFp8GEMMReduceScatterPattern(BasePattern):
             )
 
         def replacement(
-                input: torch.Tensor,
-                mat2: torch.Tensor,
-                scale_a: torch.Tensor,
-                scale_b: torch.Tensor,
+            input: torch.Tensor,
+            mat2: torch.Tensor,
+            scale_a: torch.Tensor,
+            scale_b: torch.Tensor,
         ) -> torch.Tensor:
             # fused_scaled_matmul_reduce_scatter (via aten._scaled_mm) requires
             # 2D scale tensors for non-tensorwise (per-token/per-channel) scaling.
@@ -719,6 +719,8 @@ class XPUFp8GEMMReduceScatterPattern(BasePattern):
                 scale_a = scale_a.view(-1, 1)
             if scale_b.dim() == 1:
                 scale_b = scale_b.view(1, -1)
+            if scale_a.numel() > 1 and scale_b.numel() == 1:
+                scale_b = scale_b.expand(1, mat2.shape[1]).contiguous()
             # Calculate output shape: input @ mat2 with scatter_dim reduced
             output_shape = [*input.shape[:-1], mat2.shape[1]]
             scatter_dim = 0
@@ -792,6 +794,8 @@ class AllGatherXPUFp8GEMMPattern(BasePattern):
                 scale_a = scale_a.view(-1, 1)
             if scale_b.dim() == 1:
                 scale_b = scale_b.view(1, -1)
+            if scale_a.numel() > 1 and scale_b.numel() == 1:
+                scale_b = scale_b.expand(1, weight.shape[1]).contiguous()
             ag_output, mm_outputs = torch.ops.symm_mem.fused_all_gather_scaled_matmul(  # noqa
                 x,
                 [weight],
