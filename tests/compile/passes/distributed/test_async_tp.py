@@ -297,6 +297,7 @@ class TestAGXPUFp8GEMMModel(_BaseXPUFp8GEMMModel):
 @pytest.mark.parametrize("batch_size", [8])
 @pytest.mark.parametrize("seq_len", [16])
 @pytest.mark.parametrize("hidden_size", [16])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
 @pytest.mark.parametrize("dynamic", [True, False])
 @pytest.mark.skipif(
     envs.VLLM_TARGET_DEVICE not in ["xpu"],
@@ -307,6 +308,7 @@ def test_async_tp_pass_replace_xpu_fp8(
     batch_size: int,
     seq_len: int,
     hidden_size: int,
+    dtype: torch.dtype,
     dynamic: bool,
 ):
     """Test that XPU fp8_gemm + collective ops are fused by AsyncTPPass."""
@@ -320,7 +322,7 @@ def test_async_tp_pass_replace_xpu_fp8(
             batch_size,
             seq_len,
             hidden_size,
-            torch.bfloat16,  # XPU fp8_gemm output must be bfloat16
+            dtype,
             dynamic,
         ),
         nprocs=num_processes,
@@ -431,7 +433,7 @@ def async_tp_pass_on_test_model(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     # configure vllm config for SequenceParallelismPass
     vllm_config = VllmConfig()
