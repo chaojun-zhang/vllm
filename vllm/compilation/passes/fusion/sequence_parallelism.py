@@ -22,6 +22,7 @@ from vllm.distributed.parallel_state import (
 )
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
+    kFp8DynamicTokenSym,
     kFp8StaticTensorSym,
 )
 from vllm.platforms import current_platform
@@ -112,6 +113,28 @@ def get_first_out_wrapper(
     @functools.wraps(fn)
     def wrapper(*args: Any) -> torch.Tensor:
         return fn(*args)[0]
+
+    return wrapper
+
+
+def get_first_two_out_wrapper(
+    fn: Callable[..., Sequence[torch.Tensor]],
+) -> Callable[..., tuple[torch.Tensor, torch.Tensor]]:
+    @functools.wraps(fn)
+    def wrapper(*args: Any) -> tuple[torch.Tensor, torch.Tensor]:
+        result = fn(*args)
+        return result[0], result[1]
+
+    return wrapper
+
+
+def get_first_three_out_wrapper(
+    fn: Callable[..., Sequence[torch.Tensor]],
+) -> Callable[..., tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    @functools.wraps(fn)
+    def wrapper(*args: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        result = fn(*args)
+        return result[0], result[1], result[2]
 
     return wrapper
 
@@ -497,6 +520,103 @@ class MiddleAllReduceRMSNormStaticNVFP4Pattern(_SequenceParallelPatternHelper):
         )
 
 
+class FirstAllReduceRMSNormDynamicTokenFP8Pattern(_SequenceParallelPatternHelper):
+    def __init__(
+        self,
+        epsilon: float,
+        dtype: torch.dtype,
+        device: str | None,
+    ) -> None:
+        super().__init__(epsilon, dtype, device)
+        self.quant_matcher = MatcherQuantFP8(kFp8DynamicTokenSym)
+
+    def get_inputs(self) -> list[torch.Tensor]:
+        # input, weight
+        return [self.empty([4, 16]), self.empty([16])]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(input)
+            rms = vllm.ir.ops.rms_norm(all_reduce, weight, self.epsilon)
+            quant, scale = self.quant_matcher(rms)
+            return rms, quant, scale, all_reduce
+
+        def replacement(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            reduce_scatter = self._reduce_scatter(input)
+            rms = vllm.ir.ops.rms_norm(reduce_scatter, weight, self.epsilon)
+            quant, scale = self.quant_matcher(rms)
+            all_gather_quant = self._all_gather(quant)
+            all_gather_scale = self._all_gather(scale)
+            return rms, all_gather_quant, all_gather_scale, reduce_scatter
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
+class MiddleAllReduceRMSNormDynamicTokenFP8Pattern(_SequenceParallelPatternHelper):
+    def __init__(self, epsilon: float, dtype: torch.dtype, device: str | None) -> None:
+        super().__init__(epsilon, dtype, device)
+        self.quant_matcher = MatcherQuantFP8(kFp8DynamicTokenSym)
+
+    def get_inputs(self) -> list[torch.Tensor]:
+        mm_1 = torch.empty([4, 16], device=self.device, dtype=self.dtype)
+        residual = torch.empty([4, 16], device=self.device, dtype=self.dtype)
+        rms_norm_weights = torch.empty([16], device=self.device, dtype=self.dtype)
+        return [residual, mm_1, rms_norm_weights]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(mm_1)
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                all_reduce, residual, rms_norm_weights, self.epsilon
+            )
+            quant, scale = self.quant_matcher(rms)
+            return rms, quant, scale, residual_out
+
+        def replacement(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            # pattern matcher replaces from top-to-bottom,
+            # so residual is still the full size here.
+            # add a temporary slice which will become a noop
+            # once the seqpar pattern with the previous rmsnorm is replaced
+            reduce_scatter = self._reduce_scatter(mm_1)
+            residual = residual[0 : reduce_scatter.size(0), ...]
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                reduce_scatter, residual, rms_norm_weights, self.epsilon
+            )
+            quant, scale = self.quant_matcher(rms)
+            all_gather_quant = self._all_gather(quant)
+            all_gather_scale = self._all_gather(scale)
+            # shape of residual changes but that's fine,
+            # next node is already slicing it, now becomes a noop
+            return rms, all_gather_quant, all_gather_scale, residual_out
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+        pm.register_replacement(
+            get_first_three_out_wrapper(pattern),
+            get_first_three_out_wrapper(replacement),
+            self.get_inputs(),
+            pm.fwd_only,
+            pm_pass,
+        )
+
+
 class FirstAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
     """SP pattern for XPU MXFP8 (block-32, e8m0 scale) quantization.
 
@@ -682,12 +802,18 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
             # Registered first so they take priority over float32 FP8 patterns
             # on XPU when running mxfp8 models.
             if current_platform.is_xpu():
-                FirstAllReduceRMSNormXPUMxFP8Pattern(
+                FirstAllReduceRMSNormDynamicTokenFP8Pattern(
                     epsilon, self.model_dtype, self.device
                 ).register(self.patterns)
-                MiddleAllReduceRMSNormXPUMxFP8Pattern(
+                MiddleAllReduceRMSNormDynamicTokenFP8Pattern(
                     epsilon, self.model_dtype, self.device
                 ).register(self.patterns)
+                # FirstAllReduceRMSNormXPUMxFP8Pattern(
+                #     epsilon, self.model_dtype, self.device
+                # ).register(self.patterns)
+                # MiddleAllReduceRMSNormXPUMxFP8Pattern(
+                #     epsilon, self.model_dtype, self.device
+                # ).register(self.patterns)
 
             # RMSNorm + Static FP8 quantization patterns
             FirstAllReduceRMSNormStaticFP8Pattern(
@@ -746,9 +872,9 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
     def __call__(self, graph: fx.Graph) -> None:
         self.matched_count = self.patterns.apply(graph)
         logger.info("Replaced %s patterns", self.matched_count)
-        if current_platform.is_xpu():
-            count = self._rewrite_all_gather_mxfp8_quantize(graph)
-            logger.info("Rewrote %s XPU MXFP8 quantize patterns", count)
+        # if current_platform.is_xpu():
+        #     count = self._rewrite_all_gather_mxfp8_quantize(graph)
+        #     logger.info("Rewrote %s XPU MXFP8 quantize patterns", count)
         # Clean up reshape nodes
         self.noop_cleanup(graph)
 

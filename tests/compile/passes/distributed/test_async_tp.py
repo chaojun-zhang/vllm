@@ -6,6 +6,7 @@ import pytest
 import torch
 
 import vllm.envs as envs
+from vllm import _custom_ops as ops
 from tests.compile.backend import TestBackend
 from tests.utils import (
     multi_gpu_test,
@@ -293,6 +294,86 @@ class TestAGXPUMxFp8GEMMModel(torch.nn.Module):
 
     def ops_in_model_after(self):
         return [torch.ops.vllm.fused_all_gather_xpu_mxfp8_matmul.default]
+
+
+class TestXPUFp8GEMMRSModel(torch.nn.Module):
+    """XPU scaled_mm/xpu.py W8A8 fp8_gemm + reduce_scatter."""
+
+    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
+        self.weight_scale = torch.empty([1], dtype=torch.float32)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_fp8, x_scale = ops.scaled_fp8_quant(
+            x, None, use_per_token_if_dynamic=True
+        )
+        out = torch.ops._xpu_C.fp8_gemm(
+            x_fp8, self.weight, self.dtype, x_scale, self.weight_scale, None
+        )
+        return tensor_model_parallel_reduce_scatter(out, dim=0)
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.reduce_scatter.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.fused_xpu_fp8_matmul_reduce_scatter.default]
+
+
+class TestAGXPUFp8GEMMModel(torch.nn.Module):
+    """XPU scaled_mm/xpu.py W8A8 all_gather(fp8, scale) + fp8_gemm."""
+
+    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
+        self.weight_scale = torch.empty([1], dtype=torch.float32)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        fp8_local, scale_local = ops.scaled_fp8_quant(
+            x, None, use_per_token_if_dynamic=True
+        )
+        fp8_full = tensor_model_parallel_all_gather(fp8_local, dim=0)
+        scale_full = tensor_model_parallel_all_gather(scale_local, dim=0)
+        return torch.ops._xpu_C.fp8_gemm(
+            fp8_full, self.weight, self.dtype, scale_full, self.weight_scale, None
+        )
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_gather.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.fused_all_gather_xpu_fp8_matmul.default]
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize("test_model", [TestXPUFp8GEMMRSModel, TestAGXPUFp8GEMMModel])
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+@pytest.mark.parametrize("hidden_size", [16])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dynamic", [True, False])
+@pytest.mark.skipif(
+    envs.VLLM_TARGET_DEVICE not in ["xpu"],
+    reason="XPU FP8 AsyncTP patterns only run on XPU",
+)
+def test_async_tp_pass_replace_xpu_fp8(
+    test_model,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype: torch.dtype,
+    dynamic: bool,
+):
+    num_processes = 2
+    torch.multiprocessing.spawn(
+        async_tp_pass_on_test_model,
+        args=(num_processes, test_model, batch_size, seq_len, hidden_size, dtype, dynamic),
+        nprocs=num_processes,
+    )
 
 
 @multi_gpu_test(num_gpus=2)
