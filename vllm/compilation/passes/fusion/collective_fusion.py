@@ -330,6 +330,167 @@ direct_register_custom_op(
 )
 
 
+def _xpu_mxfp8_mm_out_rs(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    *,
+    scale_a: torch.Tensor | None,
+    scale_b: torch.Tensor,
+    out: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    scale_result: torch.Tensor | None = None,
+    out_dtype: torch.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> None:
+    """mm_out_op for RS: quantize A (bf16→fp8+e8m0) then fp8_gemm into out."""
+    a_fp8, a_scale = torch.ops.vllm.xpu_mxfp8_quantize(A, None)
+    result = torch.ops._xpu_C.fp8_gemm(
+        a_fp8, B, out_dtype or out.dtype, a_scale, scale_b, bias
+    )
+    out.copy_(result)
+
+
+def fused_xpu_mxfp8_matmul_reduce_scatter_fake(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    out_dtype: torch.dtype,
+    group_name: str,
+) -> torch.Tensor:
+    world_size = c10d._resolve_process_group(group_name).size()
+    return torch.empty(
+        [x.shape[0] // world_size, weight.shape[1]],
+        dtype=out_dtype,
+        device=x.device,
+    )
+
+
+def fused_xpu_mxfp8_matmul_reduce_scatter(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    out_dtype: torch.dtype,
+    group_name: str,
+) -> torch.Tensor:
+    """XPU MXFP8: quantize x (bf16→fp8), fp8_gemm, reduce_scatter via symm_mem."""
+    return torch.distributed._symmetric_memory._fused_scaled_matmul_reduce_scatter_impl(
+        mm_out_op=_xpu_mxfp8_mm_out_rs,
+        A=x,
+        B=weight,
+        A_scale=None,  # computed dynamically inside mm_out_op via xpu_mxfp8_quantize
+        kwargs={
+            "scale_b": weight_scale,
+            "bias": None,
+            "scale_result": None,
+            "out_dtype": out_dtype,
+            "use_fast_accum": False,
+        },
+        out_dtype=out_dtype,
+        reduce_op="sum",
+        orig_scatter_dim=0,
+        scatter_dim_after_maybe_reshape=0,
+        group_name=group_name,
+        output_shape=[x.shape[0], weight.shape[1]],
+    )
+
+
+def _xpu_mxfp8_mm_out_ag(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    *,
+    scale_a: torch.Tensor,
+    scale_b: torch.Tensor,
+    out: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    scale_result: torch.Tensor | None = None,
+    out_dtype: torch.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> None:
+    """mm_out_op for AG: A is already-gathered fp8, scale_a is already-gathered e8m0."""
+    result = torch.ops._xpu_C.fp8_gemm(
+        A, B, out_dtype or out.dtype, scale_a, scale_b, bias
+    )
+    out.copy_(result)
+
+
+def fused_all_gather_xpu_mxfp8_matmul_fake(
+    fp8_shard: torch.Tensor,
+    scale_shard: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    out_dtype: torch.dtype,
+    group_name: str,
+) -> torch.Tensor:
+    world_size = c10d._resolve_process_group(group_name).size()
+    return torch.empty(
+        [fp8_shard.shape[0] * world_size, weight.shape[1]],
+        dtype=out_dtype,
+        device=fp8_shard.device,
+    )
+
+
+def fused_all_gather_xpu_mxfp8_matmul(
+    fp8_shard: torch.Tensor,
+    scale_shard: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    out_dtype: torch.dtype,
+    group_name: str,
+) -> torch.Tensor:
+    """XPU MXFP8: fuse all_gather(fp8) + fp8_gemm via symm_mem.
+
+    scale_shard is small ([M_local, K//32]) so it is gathered upfront with a
+    regular all_gather before the fused all_gather+matmul.  The gathered scale
+    is then forwarded to mm_out_op as scale_a.
+    """
+    group = c10d._resolve_process_group(group_name)
+    world_size = group.size()
+
+    # Gather scale first (small relative to fp8 activations)
+    scale_full = torch.empty(
+        [scale_shard.shape[0] * world_size] + list(scale_shard.shape[1:]),
+        dtype=scale_shard.dtype,
+        device=scale_shard.device,
+    )
+    torch.distributed.all_gather_into_tensor(
+        scale_full, scale_shard.contiguous(), group=group
+    )
+
+    # Fuse all_gather(fp8_shard) with fp8_gemm
+    _, outputs = torch.distributed._symmetric_memory._fused_all_gather_matmul_impl(
+        mm_out_op=_xpu_mxfp8_mm_out_ag,
+        A_shard=fp8_shard,
+        Bs=[weight],
+        A_scale=scale_full,  # forwarded as scale_a to mm_out_op
+        kwargs_list=[{
+            "scale_b": weight_scale,
+            "bias": None,
+            "scale_result": None,
+            "out_dtype": out_dtype,
+            "use_fast_accum": False,
+        }],
+        out_dtypes=[out_dtype],
+        gather_dim=0,
+        group_name=group_name,
+        return_A=False,
+    )
+    return outputs[0]
+
+
+direct_register_custom_op(
+    op_name="fused_xpu_mxfp8_matmul_reduce_scatter",
+    op_func=fused_xpu_mxfp8_matmul_reduce_scatter,
+    fake_impl=fused_xpu_mxfp8_matmul_reduce_scatter_fake,
+)
+
+direct_register_custom_op(
+    op_name="fused_all_gather_xpu_mxfp8_matmul",
+    op_func=fused_all_gather_xpu_mxfp8_matmul,
+    fake_impl=fused_all_gather_xpu_mxfp8_matmul_fake,
+)
+
+
+
 class BasePattern:
     def __init__(self, dtype: torch.dtype, device: str | None) -> None:
         self.dtype = dtype
@@ -677,27 +838,34 @@ class AllGatherCutlassScaledMMPattern(BasePattern):
         )
 
 
-class XPUFp8GEMMReduceScatterPattern(BasePattern):
+class XPUMxFp8GEMMReduceScatterPattern(BasePattern):
+    """XPU: fuse xpu_mxfp8_quantize + fp8_gemm + reduce_scatter for MXFP8 block-32.
+
+    Matches:
+        x (bf16) -> xpu_mxfp8_quantize -> (x_fp8, x_scale)
+                 -> fp8_gemm(x_fp8, weight, dtype, x_scale, weight_scale, None)
+                 -> reduce_scatter
+    """
+
     def get_inputs(self) -> list[torch.Tensor]:
-        inp = torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
-        mm_weight = (
-            torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
+        # x: model dtype (bf16), last dim must be divisible by MXFP8_BLOCK_SIZE=32
+        x = torch.empty([16, 32], device=self.device, dtype=self.dtype)
+        weight = (
+            torch.empty([32, 16], device=self.device, dtype=FP8_DTYPE)
             .contiguous()
-            .transpose(0, 1)
         )
-        scale_a = torch.empty([16, 1], device=self.device, dtype=torch.float32)
-        scale_b = torch.empty([1, 16], device=self.device, dtype=torch.float32)
-        return [inp, mm_weight, scale_a, scale_b]
+        weight_scale = torch.empty([1, 1], device=self.device, dtype=torch.float8_e8m0fnu)
+        return [x, weight, weight_scale]
 
     def register(self, pm_pass: PatternMatcherPass) -> None:
         def pattern(
-            inp: torch.Tensor,
+            x: torch.Tensor,
             weight: torch.Tensor,
-            scale_a: torch.Tensor,
-            scale_b: torch.Tensor,
+            weight_scale: torch.Tensor,
         ) -> torch.Tensor:
+            x_fp8, x_scale = torch.ops.vllm.xpu_mxfp8_quantize(x, None)
             mm = torch.ops._xpu_C.fp8_gemm.default(
-                inp, weight, self.dtype, scale_a, scale_b, None
+                x_fp8, weight, self.dtype, x_scale, weight_scale, None
             )
             return torch.ops.vllm.reduce_scatter.default(
                 mm,
@@ -707,108 +875,67 @@ class XPUFp8GEMMReduceScatterPattern(BasePattern):
             )
 
         def replacement(
-            input: torch.Tensor,
-            mat2: torch.Tensor,
-            scale_a: torch.Tensor,
-            scale_b: torch.Tensor,
+            x: torch.Tensor,
+            weight: torch.Tensor,
+            weight_scale: torch.Tensor,
         ) -> torch.Tensor:
-            # fused_scaled_matmul_reduce_scatter (via aten._scaled_mm) requires
-            # 2D scale tensors for non-tensorwise (per-token/per-channel) scaling.
-            # fp8_gemm accepts 1D scales, so reshape here if needed.
-            if scale_a.dim() == 1:
-                scale_a = scale_a.view(-1, 1)
-            if scale_b.dim() == 1:
-                scale_b = scale_b.view(1, -1)
-            if scale_a.numel() > 1 and scale_b.numel() == 1:
-                scale_b = scale_b.expand(1, mat2.shape[1]).contiguous()
-            # Calculate output shape: input @ mat2 with scatter_dim reduced
-            output_shape = [*input.shape[:-1], mat2.shape[1]]
-            scatter_dim = 0
-            gemm_rs = torch.ops.vllm.patched_fused_scaled_matmul_reduce_scatter(
-                input,
-                mat2,
-                scale_a,
-                scale_b,
-                "sum",
-                scatter_dim,  # orig_scatter_dim
-                scatter_dim,  # scatter_dim_after_maybe_reshape
-                self.tp.device_group.group_name,
-                output_shape,
-                None,  # bias
-                None,  # result_scale
-                self.dtype,  # out_dtype
-                False,  # use_fast_accum
+            return torch.ops.vllm.fused_xpu_mxfp8_matmul_reduce_scatter.default(
+                x, weight, weight_scale, self.dtype, self.tp.device_group.group_name
             )
-
-            return gemm_rs
 
         pm.register_replacement(
             pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
         )
 
 
-class AllGatherXPUFp8GEMMPattern(BasePattern):
-    """XPU: fuse all_gather + _xpu_C.fp8_gemm into
-    symm_mem.fused_all_gather_scaled_matmul."""
+class AllGatherXPUMxFp8GEMMPattern(BasePattern):
+    """XPU: fuse 2×all_gather + fp8_gemm for MXFP8 block-32.
+
+    After the SP pass, the graph for a column-parallel linear looks like:
+        reduce_scatter -> rms_norm -> xpu_mxfp8_quantize
+                                         |-> all_gather(fp8_local)   -> fp8_full
+                                         |-> all_gather(scale_local) -> scale_full
+                                         fp8_gemm(fp8_full, weight, dtype, scale_full, weight_scale)
+
+    This pattern fuses the two all_gathers with the subsequent fp8_gemm.
+    """
 
     def get_inputs(self) -> list[torch.Tensor]:
-        x = torch.empty([8, 16], device=self.device, dtype=FP8_DTYPE)
-        weight = (
-            torch.empty([16, 16], device=self.device, dtype=FP8_DTYPE)
-            .contiguous()
-            .transpose(0, 1)
-        )
-
-        s1 = x.shape[0] * self.tp_size
-
-        scale_a = torch.empty([s1, 1], device=self.device, dtype=torch.float32)
-        scale_b = torch.empty([1, 16], device=self.device, dtype=torch.float32)
-
-        return [x, weight, scale_a, scale_b]
+        # fp8_local: local FP8 shard, last dim divisible by 32
+        fp8_local = torch.empty([8, 32], device=self.device, dtype=FP8_DTYPE)
+        # scale_local: e8m0fnu scale, shape [M_local, K//32]
+        scale_local = torch.empty([8, 1], device=self.device, dtype=torch.float8_e8m0fnu)
+        weight = torch.empty([32, 16], device=self.device, dtype=FP8_DTYPE).contiguous()
+        weight_scale = torch.empty([1, 1], device=self.device, dtype=torch.float8_e8m0fnu)
+        return [fp8_local, scale_local, weight, weight_scale]
 
     def register(self, pm_pass: PatternMatcherPass) -> None:
         def pattern(
-            x: torch.Tensor,
+            fp8_local: torch.Tensor,
+            scale_local: torch.Tensor,
             weight: torch.Tensor,
-            scale_a: torch.Tensor,
-            scale_b: torch.Tensor,
+            weight_scale: torch.Tensor,
         ) -> torch.Tensor:
-            all_gather = torch.ops.vllm.all_gather.default(
-                x, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+            fp8_full = torch.ops.vllm.all_gather.default(
+                fp8_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
             )
-
+            scale_full = torch.ops.vllm.all_gather.default(
+                scale_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+            )
             return torch.ops._xpu_C.fp8_gemm.default(
-                all_gather, weight, self.dtype, scale_a, scale_b, None
+                fp8_full, weight, self.dtype, scale_full, weight_scale, None
             )
 
         def replacement(
-            x: torch.Tensor,
+            fp8_local: torch.Tensor,
+            scale_local: torch.Tensor,
             weight: torch.Tensor,
-            scale_a: torch.Tensor,
-            scale_b: torch.Tensor,
+            weight_scale: torch.Tensor,
         ) -> torch.Tensor:
-            # fused_all_gather_scaled_matmul (via aten._scaled_mm) requires 2D
-            # scale tensors for non-tensorwise scaling.  fp8_gemm accepts 1D
-            # scales, so reshape here if needed.
-            if scale_a.dim() == 1:
-                scale_a = scale_a.view(-1, 1)
-            if scale_b.dim() == 1:
-                scale_b = scale_b.view(1, -1)
-            if scale_a.numel() > 1 and scale_b.numel() == 1:
-                scale_b = scale_b.expand(1, weight.shape[1]).contiguous()
-            ag_output, mm_outputs = torch.ops.symm_mem.fused_all_gather_scaled_matmul(  # noqa
-                x,
-                [weight],
-                scale_a,
-                [scale_b],
-                gather_dim=0,
-                biases=[None],
-                result_scales=[None],
-                out_dtypes=[self.dtype],
-                use_fast_accum=[False],
-                group_name=self.tp.device_group.group_name,
+            return torch.ops.vllm.fused_all_gather_xpu_mxfp8_matmul.default(
+                fp8_local, scale_local, weight, weight_scale,
+                self.dtype, self.tp.device_group.group_name
             )
-            return mm_outputs
 
         pm.register_replacement(
             pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
@@ -1101,10 +1228,10 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
                 # than the existing FP8-style helper.
 
             if current_platform.is_xpu():
-                XPUFp8GEMMReduceScatterPattern(
+                XPUMxFp8GEMMReduceScatterPattern(
                     self.model_dtype, self.device
                 ).register(self.pm_pass)
-                AllGatherXPUFp8GEMMPattern(
+                AllGatherXPUMxFp8GEMMPattern(
                     self.model_dtype, self.device
                 ).register(self.pm_pass)
 

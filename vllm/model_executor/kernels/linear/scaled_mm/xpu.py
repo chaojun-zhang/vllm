@@ -40,10 +40,7 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
     def __init__(
         self, c: FP8ScaledMMLinearLayerConfig, layer_param_names: Sequence[str]
     ) -> None:
-        assert self.can_implement(c)[0]
-        assert self.is_supported()[0]
-        self.config = c
-        self.layer_param_names = layer_param_names
+        super().__init__(c, layer_param_names)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         # fp8_gemm_w8a16 expects weight in [in, out] layout.
@@ -80,6 +77,15 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
             bias=bias,
             output_shape=output_shape,
         )
+        replace_parameter(layer, "weight", layer.weight.data.t())
+    # def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+    #     weight_name, _, input_scale_name, _ = self.layer_param_names
+    #     replace_parameter(layer, weight_name, getattr(layer, weight_name).data.t())
+    #
+    #     if self.config.activation_quant_key.scale.static:
+    #         input_scale = getattr(layer, input_scale_name, None)
+    #         if input_scale is not None:
+    #             replace_parameter(layer, input_scale_name, input_scale.max())
 
     def apply_scaled_mm(
         self,

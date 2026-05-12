@@ -4,6 +4,7 @@
 import pytest
 import torch
 
+import vllm.envs as envs
 from tests.compile.backend import TestBackend
 from tests.utils import TestFP8Layer, multi_gpu_test
 from vllm.compilation.passes.fusion.rms_quant_fusion import RMSNormQuantFusionPass
@@ -22,7 +23,11 @@ from vllm.config import (
     set_current_vllm_config,
 )
 from vllm.config.utils import Range
-from vllm.distributed import tensor_model_parallel_all_reduce
+from vllm.distributed import (
+    tensor_model_parallel_all_gather,
+    tensor_model_parallel_all_reduce,
+    tensor_model_parallel_reduce_scatter,
+)
 from vllm.distributed.parallel_state import (
     init_distributed_environment,
     initialize_model_parallel,
@@ -263,7 +268,7 @@ def sequence_parallelism_pass_on_test_model(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     # configure vllm config for SequenceParallelismPass
     custom_ops_list = custom_ops.split(",") if custom_ops else []
@@ -342,3 +347,174 @@ def sequence_parallelism_pass_on_test_model(
 
         for op in model.ops_in_model():
             assert backend.op_count(op, before=False) > 0
+
+
+# ---------------------------------------------------------------------------
+# XPU MXFP8 SP patterns
+# ---------------------------------------------------------------------------
+
+MXFP8_E8M0_DTYPE = torch.float8_e8m0fnu
+
+
+class TestAllReduceRMSNormXPUMxFP8Model(torch.nn.Module):
+    """Model with all_reduce → rms_norm/fused_add_rms_norm → xpu_mxfp8_quantize.
+
+    Tests FirstAllReduceRMSNormXPUMxFP8Pattern (layer 0) and
+    MiddleAllReduceRMSNormXPUMxFP8Pattern (layers 1-3).
+    hidden_size must be divisible by 32 (MXFP8 block size).
+    """
+
+    def __init__(self, hidden_size=32, eps=1e-6):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.eps = eps
+        self.dtype = torch.bfloat16
+        self.norm = [RMSNorm(hidden_size, eps) for _ in range(4)]
+        # 4 weights: one per layer (weight [K, N], weight_scale [K//32, N])
+        self.w = [
+            torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE) for _ in range(4)
+        ]
+        self.ws = [
+            torch.empty([hidden_size // 32, hidden_size], dtype=MXFP8_E8M0_DTYPE)
+            for _ in range(4)
+        ]
+
+    def forward(self, x):
+        z = torch.relu(x)
+        x = resid = tensor_model_parallel_all_reduce(z)
+        y = self.norm[0](x)
+        # First pattern: rms_norm → xpu_mxfp8_quantize
+        fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(y, None)
+        z2 = torch.ops._xpu_C.fp8_gemm(fp8, self.w[0], self.dtype, scale, self.ws[0], None)
+
+        x2 = tensor_model_parallel_all_reduce(z2)
+        y2, resid = self.norm[1](x2, resid)
+        # Middle pattern 1
+        fp8_2, scale_2 = torch.ops.vllm.xpu_mxfp8_quantize(y2, None)
+        z3 = torch.ops._xpu_C.fp8_gemm(
+            fp8_2, self.w[1], self.dtype, scale_2, self.ws[1], None
+        )
+
+        x3 = tensor_model_parallel_all_reduce(z3)
+        y3, resid = self.norm[2](x3, resid)
+        # Middle pattern 2
+        fp8_3, scale_3 = torch.ops.vllm.xpu_mxfp8_quantize(y3, None)
+        z4 = torch.ops._xpu_C.fp8_gemm(
+            fp8_3, self.w[2], self.dtype, scale_3, self.ws[2], None
+        )
+
+        x4 = tensor_model_parallel_all_reduce(z4)
+        y4, resid = self.norm[3](x4, resid)
+        # Middle pattern 3: fp8_gemm uses both fp8 and scale; return resid so
+        # residual_out has a consumer → full 3-tuple pattern matches (2 all_gathers)
+        fp8_4, scale_4 = torch.ops.vllm.xpu_mxfp8_quantize(y4, None)
+        z5 = torch.ops._xpu_C.fp8_gemm(
+            fp8_4, self.w[3], self.dtype, scale_4, self.ws[3], None
+        )
+        return z5, resid
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_reduce.default]
+
+    def ops_in_model_after(self):
+        # After SP pass: reduce_scatter × 4, all_gather × 8 (fp8 + scale per layer,
+        # all 4 layers match the full 3-tuple pattern variant)
+        return [
+            torch.ops.vllm.all_gather.default,
+            torch.ops.vllm.reduce_scatter.default,
+        ]
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+@pytest.mark.parametrize("hidden_size", [32])  # must be multiple of 32 for MXFP8
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.skipif(
+    not current_platform.is_xpu(),
+    reason="XPU MXFP8 SP patterns require xpu_mxfp8_quantize, XPU only",
+)
+def test_sequence_parallelism_pass_xpu_mxfp8(
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dynamic: bool,
+):
+    num_processes = 2
+    torch.multiprocessing.spawn(
+        sequence_parallelism_pass_on_xpu_mxfp8_model,
+        args=(num_processes, batch_size, seq_len, hidden_size, dynamic),
+        nprocs=num_processes,
+    )
+
+
+def sequence_parallelism_pass_on_xpu_mxfp8_model(
+    local_rank: int,
+    world_size: int,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dynamic: bool,
+):
+    dtype = torch.bfloat16
+    set_random_seed(0)
+    device = torch.device(f"{DEVICE_TYPE}:{local_rank}")
+    torch.accelerator.set_device_index(device)
+    torch.set_default_device(device)
+    torch.set_default_dtype(dtype)
+
+    update_environment_variables(
+        {
+            "RANK": str(local_rank),
+            "LOCAL_RANK": str(local_rank),
+            "WORLD_SIZE": str(world_size),
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "12346",
+        }
+    )
+
+    init_distributed_environment(backend=current_platform.dist_backend)
+
+    compilation_config = CompilationConfig(
+        splitting_ops=[],
+        cudagraph_mode=CUDAGraphMode.NONE,
+        pass_config=PassConfig(enable_sp=True, eliminate_noops=True),
+    )
+    device_config = DeviceConfig(device=torch.device(DEVICE_TYPE))
+    model_name = "RedHatAI/Llama-3.2-1B-Instruct-FP8"
+    model_config = ModelConfig(
+        model=model_name, trust_remote_code=True, dtype=dtype, seed=42
+    )
+    vllm_config = VllmConfig(
+        model_config=model_config,
+        device_config=device_config,
+        compilation_config=compilation_config,
+    )
+
+    with set_current_vllm_config(vllm_config):
+        initialize_model_parallel(tensor_model_parallel_size=world_size)
+
+        noop_pass = NoOpEliminationPass(vllm_config)
+        sp_pass = SequenceParallelismPass(vllm_config)
+        cleanup_pass = PostCleanupPass(vllm_config)
+        backend = TestBackend(noop_pass, sp_pass, cleanup_pass)
+
+        model = TestAllReduceRMSNormXPUMxFP8Model(hidden_size)
+        hidden_states = torch.randn((batch_size * seq_len, hidden_size), dtype=dtype)
+        if dynamic:
+            torch._dynamo.mark_dynamic(hidden_states, 0)
+
+        compiled_model = torch.compile(model, backend=backend)
+        compiled_model(hidden_states)
+
+        assert sp_pass.matched_count == 4
+
+        # Before: all_reduce should appear 4 times
+        assert backend.op_count(torch.ops.vllm.all_reduce.default, before=True) == 4
+
+        # After: reduce_scatter 4 times, all_gather 8 times (fp8 + scale per layer)
+        assert backend.op_count(torch.ops.vllm.reduce_scatter.default, before=False) == 4
+        assert backend.op_count(torch.ops.vllm.all_gather.default, before=False) == 8
+
+        # all_reduce should be gone
+        assert backend.op_count(torch.ops.vllm.all_reduce.default, before=False) == 0
