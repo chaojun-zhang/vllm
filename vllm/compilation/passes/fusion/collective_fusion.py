@@ -30,6 +30,7 @@ from ..vllm_inductor_pass import (
 )
 
 FP8_DTYPE = current_platform.fp8_dtype()
+_XPU_BYTE_ALL_GATHER_MAX_NUMEL = 512 * 1024
 
 logger = init_logger(__name__)
 
@@ -388,6 +389,40 @@ def fused_xpu_fp8_matmul_reduce_scatter(
     return output
 
 
+def _xpu_all_gather_dim0_chunked(
+    output: torch.Tensor,
+    input_: torch.Tensor,
+    group: torch.distributed.ProcessGroup,
+) -> None:
+    if (
+        input_.numel() <= _XPU_BYTE_ALL_GATHER_MAX_NUMEL
+        or input_.element_size() != 1
+    ):
+        torch.distributed.all_gather_into_tensor(output, input_.contiguous(), group=group)
+        return
+
+    local_rows = input_.shape[0]
+    if local_rows == 0:
+        return
+
+    world_size = group.size()
+    row_numel = input_.numel() // local_rows
+    rows_per_chunk = max(1, _XPU_BYTE_ALL_GATHER_MAX_NUMEL // row_numel)
+    for start in range(0, local_rows, rows_per_chunk):
+        chunk = input_[start : start + rows_per_chunk].contiguous()
+        chunk_rows = chunk.shape[0]
+        gathered = torch.empty(
+            [chunk_rows * world_size] + list(input_.shape[1:]),
+            dtype=input_.dtype,
+            device=input_.device,
+        )
+        torch.distributed.all_gather_into_tensor(gathered, chunk, group=group)
+        for rank in range(world_size):
+            output.narrow(0, rank * local_rows + start, chunk_rows).copy_(
+                gathered.narrow(0, rank * chunk_rows, chunk_rows)
+            )
+
+
 def fused_all_gather_xpu_fp8_matmul_fake(
     fp8_shard: torch.Tensor,
     scale_shard: torch.Tensor,
@@ -429,9 +464,7 @@ def fused_all_gather_xpu_fp8_matmul(
         dtype=fp8_shard.dtype,
         device=fp8_shard.device,
     )
-    torch.distributed.all_gather_into_tensor(
-        fp8_full, fp8_shard.contiguous(), group=group
-    )
+    _xpu_all_gather_dim0_chunked(fp8_full, fp8_shard, group)
     return torch.ops._xpu_C.fp8_gemm(
         fp8_full, weight, out_dtype, scale_full, weight_scale, None
     )
