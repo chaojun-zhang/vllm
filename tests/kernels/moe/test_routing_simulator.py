@@ -23,6 +23,7 @@ from vllm.model_executor.layers.fused_moe.router.routing_simulator_router import
     DistributionBasedRouting,
     RoutingSimulator,
 )
+from vllm.platforms import current_platform
 
 
 @pytest.fixture
@@ -104,6 +105,7 @@ def test_routing_strategy_integration(monkeypatch, device):
             rank=0,
             local_rank=0,
             distributed_init_method=f"file://{temp_file}",
+            backend=current_platform.dist_backend,
         )
         initialize_model_parallel(
             tensor_model_parallel_size=1,

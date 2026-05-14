@@ -222,6 +222,7 @@ def init_test_http_connection():
 
 @pytest.fixture
 def dist_init():
+    from vllm.platforms import current_platform
     from tests.utils import ensure_current_vllm_config
 
     temp_file = tempfile.mkstemp()[1]
@@ -232,7 +233,7 @@ def dist_init():
             rank=0,
             distributed_init_method=f"file://{temp_file}",
             local_rank=0,
-            backend="nccl",
+            backend=current_platform.dist_backend,
         )
         initialize_model_parallel(1, 1)
         yield

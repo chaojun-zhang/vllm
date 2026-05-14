@@ -262,7 +262,7 @@ def sequence_parallelism_pass_on_test_model(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     # configure vllm config for SequenceParallelismPass
     custom_ops_list = custom_ops.split(",") if custom_ops else []

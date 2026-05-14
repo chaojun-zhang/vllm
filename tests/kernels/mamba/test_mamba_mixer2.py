@@ -12,6 +12,7 @@ from vllm.distributed.parallel_state import (
     initialize_model_parallel,
 )
 from vllm.model_executor.layers.mamba.mamba_mixer2 import Mixer2RMSNormGated
+from vllm.platforms import current_platform
 from vllm.utils.system_utils import update_environment_variables
 from vllm.utils.torch_utils import set_random_seed
 
@@ -86,7 +87,7 @@ def mixer2_gated_norm_tensor_parallel(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
     with ensure_current_vllm_config():
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 

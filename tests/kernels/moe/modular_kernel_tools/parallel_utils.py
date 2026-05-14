@@ -16,6 +16,7 @@ from vllm.distributed import (
     init_distributed_environment,
     initialize_model_parallel,
 )
+from vllm.platforms import current_platform
 from vllm.utils.network_utils import get_open_port
 
 ## Parallel Processes Utils
@@ -53,7 +54,7 @@ def _set_vllm_config(
             rank=tp_pp_rank,
             distributed_init_method=f"file://{temp_file}",
             local_rank=local_rank,
-            backend="nccl",
+            backend=current_platform.dist_backend,
         )
 
         initialize_model_parallel(

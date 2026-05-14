@@ -51,7 +51,7 @@ def nccl_symm_mem_allreduce_worker(local_rank: int, world_size: int):
             }
         )
 
-        init_distributed_environment()
+        init_distributed_environment(backend=current_platform.dist_backend)
         with ensure_current_vllm_config():
             initialize_model_parallel(tensor_model_parallel_size=world_size)
 

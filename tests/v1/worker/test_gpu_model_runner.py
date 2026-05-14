@@ -1027,7 +1027,7 @@ def test_hybrid_attention_mamba_tensor_shapes():
     from tests.utils import ensure_current_vllm_config
 
     with ensure_current_vllm_config():
-        init_distributed_environment()
+        init_distributed_environment(backend=current_platform.dist_backend)
         initialize_model_parallel(tensor_model_parallel_size=1)
     torch.set_default_dtype(torch.float16)
 
@@ -1487,7 +1487,7 @@ def test_mamba_cache_raises_when_max_num_seqs_exceeds_blocks():
     from tests.utils import ensure_current_vllm_config
 
     with ensure_current_vllm_config():
-        init_distributed_environment()
+        init_distributed_environment(backend=current_platform.dist_backend)
         initialize_model_parallel(tensor_model_parallel_size=1)
     torch.set_default_dtype(torch.float16)
 

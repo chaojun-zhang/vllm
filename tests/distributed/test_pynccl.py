@@ -19,6 +19,7 @@ from vllm.distributed.parallel_state import (
     graph_capture,
     init_distributed_environment,
 )
+from vllm.platforms import current_platform
 from vllm.utils.system_utils import update_environment_variables
 
 mp.set_start_method("spawn", force=True)
@@ -55,7 +56,7 @@ def worker_fn_wrapper(fn):
         local_rank = os.environ["LOCAL_RANK"]
         device = torch.device(f"cuda:{local_rank}")
         torch.accelerator.set_device_index(device)
-        init_distributed_environment()
+        init_distributed_environment(backend=current_platform.dist_backend)
         fn()
 
     return wrapped_fn

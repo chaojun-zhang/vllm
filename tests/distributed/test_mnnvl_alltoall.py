@@ -20,6 +20,7 @@ from vllm.utils.flashinfer import (
     has_flashinfer_nvlink_two_sided,
 )
 from vllm.utils.network_utils import get_open_port
+from vllm.platforms import current_platform
 
 from ..utils import init_test_distributed_environment
 
@@ -136,6 +137,7 @@ def _init_dp_environment(world_size, rank, port, dp_size, dp_port):
             rank=0,
             distributed_init_method=f"tcp://localhost:{port}",
             local_rank=rank,
+            backend=current_platform.dist_backend,
         )
         ensure_model_parallel_initialized(1, 1)
 

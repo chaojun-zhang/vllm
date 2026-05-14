@@ -116,7 +116,7 @@ def run_dp_sharded_vision_model_vs_direct(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
     with ensure_current_vllm_config():
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 
@@ -302,7 +302,7 @@ def run_dp_sharded_mrope_vision_model_vs_direct(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
     with ensure_current_vllm_config():
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 
@@ -378,7 +378,7 @@ def run_dp_sharded_mrope_vision_model_empty_input_worker(
         }
     )
 
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
     with ensure_current_vllm_config():
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 
@@ -427,7 +427,7 @@ def run_dp_sharded_mrope_vision_model_uneven_load_worker(
         }
     )
 
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
     with ensure_current_vllm_config():
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 

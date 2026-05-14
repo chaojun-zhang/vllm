@@ -333,7 +333,7 @@ def async_tp_pass_on_test_model(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     # configure vllm config for SequenceParallelismPass
     vllm_config = VllmConfig()

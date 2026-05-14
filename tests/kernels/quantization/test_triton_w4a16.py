@@ -211,6 +211,7 @@ def test_triton_w4a16_process_weights_after_loading_repacks_layout():
             rank=0,
             distributed_init_method="tcp://127.0.0.1:0",
             local_rank=0,
+            backend=current_platform.dist_backend,
         )
         ensure_model_parallel_initialized(1, 1)
 

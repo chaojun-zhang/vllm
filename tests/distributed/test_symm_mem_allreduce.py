@@ -52,7 +52,7 @@ def symm_mem_allreduce_worker(local_rank: int, world_size: int, q: mp.Queue):
             }
         )
 
-        init_distributed_environment()
+        init_distributed_environment(backend=current_platform.dist_backend)
         initialize_model_parallel(tensor_model_parallel_size=world_size)
 
         cuda_communicator = typing.cast(

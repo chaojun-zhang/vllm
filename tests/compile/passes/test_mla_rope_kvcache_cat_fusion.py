@@ -311,7 +311,7 @@ def test_mla_rope_kvcache_cat_fusion(
                     "MASTER_PORT": "54321",
                 }
             )
-            init_distributed_environment()
+            init_distributed_environment(backend=current_platform.dist_backend)
             initialize_model_parallel()
 
         if attn_backend == AttentionBackendEnum.ROCM_AITER_MLA:

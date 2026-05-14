@@ -342,7 +342,7 @@ def all_reduce_fusion_pass_on_test_model(
         }
     )
 
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     custom_ops = []
     if enable_rms_norm_custom_op:

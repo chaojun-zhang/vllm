@@ -141,7 +141,7 @@ def initialize_dummy_model(
             rank=0,
             distributed_init_method=f"file://{temp_file}",
             local_rank=0,
-            backend="nccl",
+            backend=current_platform.dist_backend,
         )
         initialize_model_parallel(tensor_model_parallel_size=1)
 
