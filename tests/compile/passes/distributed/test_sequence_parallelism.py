@@ -483,7 +483,7 @@ def sequence_parallelism_pass_on_xpu_mxfp8_model(
         pass_config=PassConfig(enable_sp=True, eliminate_noops=True),
     )
     device_config = DeviceConfig(device=torch.device(DEVICE_TYPE))
-    model_name = "RedHatAI/Llama-3.2-1B-Instruct-FP8"
+    model_name = "INCModel/Qwen3-32B-MXFP8-LLMC"
     model_config = ModelConfig(
         model=model_name, trust_remote_code=True, dtype=dtype, seed=42
     )

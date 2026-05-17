@@ -168,6 +168,11 @@ class _SequenceParallelPatternHelper:
             x, dim=0, world_size=self.tp_size, group_name=self.tp_group.unique_name
         )
 
+    def _all_gather_xpu_mxfp8_scale(self, scale: torch.Tensor) -> torch.Tensor:
+        scale_i8 = torch.ops.aten.view.dtype(scale, torch.int8)
+        scale_full_i8 = self._all_gather(scale_i8)
+        return torch.ops.aten.view.dtype(scale_full_i8, torch.float8_e8m0fnu)
+
     def empty(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         return torch.empty(*args, dtype=self.dtype, device=self.device, **kwargs)
 
@@ -624,7 +629,7 @@ class FirstAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
         all_reduce -> rms_norm -> xpu_mxfp8_quantize(fp8, scale_e8m0)
     Into:
         reduce_scatter -> rms_norm -> xpu_mxfp8_quantize(fp8_local, scale_local)
-            -> all_gather(fp8) + all_gather(scale_e8m0)
+            -> all_gather(fp8) + all_gather(scale_e8m0 as int8)
 
     MXFP8 block-32 scales are computed per K-block of 32 elements, which are
     independent across tokens.  The quantization can therefore run on the local
@@ -646,7 +651,7 @@ class FirstAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             all_reduce = self._all_reduce(input)
             rms = vllm.ir.ops.rms_norm(all_reduce, weight, self.epsilon)
-            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms, None)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
             return fp8, scale, all_reduce
 
         def replacement(
@@ -655,9 +660,9 @@ class FirstAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
         ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
             reduce_scatter = self._reduce_scatter(input)
             rms = vllm.ir.ops.rms_norm(reduce_scatter, weight, self.epsilon)
-            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms, None)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
             all_gather_fp8 = self._all_gather(fp8)
-            all_gather_scale = self._all_gather(scale)
+            all_gather_scale = self._all_gather_xpu_mxfp8_scale(scale)
             return all_gather_fp8, all_gather_scale, reduce_scatter
 
         pm.register_replacement(
@@ -671,8 +676,9 @@ class MiddleAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
     Transforms:
         all_reduce -> fused_add_rms_norm -> xpu_mxfp8_quantize(fp8, scale_e8m0)
     Into:
-        reduce_scatter -> fused_add_rms_norm -> xpu_mxfp8_quantize(fp8_local, scale_local)
-            -> all_gather(fp8) + all_gather(scale_e8m0)
+        reduce_scatter -> fused_add_rms_norm
+            -> xpu_mxfp8_quantize(fp8_local, scale_local)
+            -> all_gather(fp8) + all_gather(scale_e8m0 as int8)
     """
 
     def __init__(self, epsilon: float, dtype: torch.dtype, device: str | None) -> None:
@@ -694,7 +700,7 @@ class MiddleAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
             rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
                 all_reduce, residual, rms_norm_weights, self.epsilon
             )
-            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms, None)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
             return fp8, scale, residual_out
 
         def replacement(
@@ -711,9 +717,9 @@ class MiddleAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
             rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
                 reduce_scatter, residual, rms_norm_weights, self.epsilon
             )
-            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms, None)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
             all_gather_fp8 = self._all_gather(fp8)
-            all_gather_scale = self._all_gather(scale)
+            all_gather_scale = self._all_gather_xpu_mxfp8_scale(scale)
             # shape of residual changes but that's fine,
             # next node is already slicing it, now becomes a noop
             return all_gather_fp8, all_gather_scale, residual_out
@@ -723,8 +729,8 @@ class MiddleAllReduceRMSNormXPUMxFP8Pattern(_SequenceParallelPatternHelper):
         )
 
         pm.register_replacement(
-            get_first_out_wrapper(pattern),
-            get_first_out_wrapper(replacement),
+            get_first_two_out_wrapper(pattern),
+            get_first_two_out_wrapper(replacement),
             self.get_inputs(),
             pm.fwd_only,
             pm_pass,
@@ -802,16 +808,16 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
             # Registered first so they take priority over float32 FP8 patterns
             # on XPU when running mxfp8 models.
             if current_platform.is_xpu():
-                FirstAllReduceRMSNormDynamicTokenFP8Pattern(
+                FirstAllReduceRMSNormXPUMxFP8Pattern(
                     epsilon, self.model_dtype, self.device
                 ).register(self.patterns)
-                MiddleAllReduceRMSNormDynamicTokenFP8Pattern(
+                MiddleAllReduceRMSNormXPUMxFP8Pattern(
                     epsilon, self.model_dtype, self.device
                 ).register(self.patterns)
-                # FirstAllReduceRMSNormXPUMxFP8Pattern(
+                # FirstAllReduceRMSNormDynamicTokenFP8Pattern(
                 #     epsilon, self.model_dtype, self.device
                 # ).register(self.patterns)
-                # MiddleAllReduceRMSNormXPUMxFP8Pattern(
+                # MiddleAllReduceRMSNormDynamicTokenFP8Pattern(
                 #     epsilon, self.model_dtype, self.device
                 # ).register(self.patterns)
 
@@ -872,20 +878,22 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
     def __call__(self, graph: fx.Graph) -> None:
         self.matched_count = self.patterns.apply(graph)
         logger.info("Replaced %s patterns", self.matched_count)
-        # if current_platform.is_xpu():
-        #     count = self._rewrite_all_gather_mxfp8_quantize(graph)
-        #     logger.info("Rewrote %s XPU MXFP8 quantize patterns", count)
+        if current_platform.is_xpu():
+            count = self._rewrite_all_gather_mxfp8_quantize(graph)
+            logger.info("Rewrote %s XPU MXFP8 quantize patterns", count)
         # Clean up reshape nodes
         self.noop_cleanup(graph)
 
     def _rewrite_all_gather_mxfp8_quantize(self, graph: fx.Graph) -> int:
         """Move XPU MXFP8 quantization before sequence-parallel all_gather.
 
-        The generic RMSNorm SP pattern may rewrite
-        all_reduce -> rms_norm into reduce_scatter -> rms_norm -> all_gather,
-        leaving MXFP8 quantization after the all_gather.  For MXFP8, quantization
-        is token-local, so quantize the local shard first and all-gather both
-        the fp8 tensor and its e8m0 scale.
+        The generic RMSNorm SP pattern can match before the MXFP8-specific
+        pattern, leaving the graph as:
+            local rms_norm -> all_gather -> xpu_mxfp8_quantize -> fp8_gemm
+
+        MXFP8 quantization is token-local, so the quantize can run before
+        all_gather.  Gather the e8m0 scale through an int8 view because XCCL
+        does not support Float8_e8m0fnu collectives.
         """
         all_gather_op = torch.ops.vllm.all_gather.default
         quantize_op = torch.ops.vllm.xpu_mxfp8_quantize.default
@@ -903,8 +911,8 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
             ):
                 continue
 
-            fp8_getitem = None
-            scale_getitem = None
+            fp8_getitem: fx.Node | None = None
+            scale_getitem: fx.Node | None = None
             for user in quantize.users:
                 if user.op != "call_function" or user.target != operator.getitem:
                     continue
@@ -942,31 +950,31 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
                 local_scale = graph.call_function(
                     operator.getitem, args=(local_quantize, 1)
                 )
-                local_scale_u8 = graph.call_function(
-                    torch.ops.aten.view.dtype, args=(local_scale, torch.uint8)
+                local_scale_i8 = graph.call_function(
+                    torch.ops.aten.view.dtype, args=(local_scale, torch.int8)
                 )
                 fp8 = graph.call_function(
                     all_gather_op,
                     args=(local_fp8, *all_gather_args),
                     kwargs=all_gather.kwargs,
                 )
-                scale_u8 = graph.call_function(
+                scale_i8 = graph.call_function(
                     all_gather_op,
-                    args=(local_scale_u8, *all_gather_args),
+                    args=(local_scale_i8, *all_gather_args),
                     kwargs=all_gather.kwargs,
                 )
                 scale = graph.call_function(
                     torch.ops.aten.view.dtype,
-                    args=(scale_u8, torch.float8_e8m0fnu),
+                    args=(scale_i8, torch.float8_e8m0fnu),
                 )
 
             self._set_local_mxfp8_meta(
-                local_input, local_quantize, local_fp8, local_scale, local_scale_u8
+                local_input, local_quantize, local_fp8, local_scale, local_scale_i8
             )
             self._copy_meta(fp8, fp8_getitem)
-            self._copy_meta(scale_u8, scale_getitem)
-            if "val" in scale_u8.meta:
-                scale_u8.meta["val"] = scale_u8.meta["val"].view(torch.uint8)
+            self._copy_meta(scale_i8, scale_getitem)
+            if "val" in scale_i8.meta:
+                scale_i8.meta["val"] = scale_i8.meta["val"].view(torch.int8)
             self._copy_meta(scale, scale_getitem)
 
             gemm.update_arg(0, fp8)
@@ -989,7 +997,7 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
         local_quantize: fx.Node,
         local_fp8: fx.Node,
         local_scale: fx.Node,
-        local_scale_u8: fx.Node,
+        local_scale_i8: fx.Node,
     ) -> None:
         if "val" not in local_input.meta:
             return
@@ -999,4 +1007,4 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
         local_quantize.meta["val"] = quantize_val
         local_fp8.meta["val"] = quantize_val[0]
         local_scale.meta["val"] = quantize_val[1]
-        local_scale_u8.meta["val"] = quantize_val[1].view(torch.uint8)
+        local_scale_i8.meta["val"] = quantize_val[1].view(torch.int8)

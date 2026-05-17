@@ -345,6 +345,9 @@ def _xpu_fp8_mm_out(
 ) -> None:
     assert scale_result is None, "XPU fp8_gemm does not support result scaling"
     assert not use_fast_accum, "XPU fp8_gemm does not support use_fast_accum"
+    if hasattr(torch.ops._xpu_C, "fp8_gemm_out"):
+        torch.ops._xpu_C.fp8_gemm_out(out, A, B, scale_a, scale_b, bias)
+        return
     result = torch.ops._xpu_C.fp8_gemm(
         A, B, out_dtype or out.dtype, scale_a, scale_b, bias
     )
@@ -487,7 +490,7 @@ def _xpu_mxfp8_mm_out_rs(
     A: torch.Tensor,
     B: torch.Tensor,
     *,
-    scale_a: torch.Tensor | None,
+    scale_a: torch.Tensor,
     scale_b: torch.Tensor,
     out: torch.Tensor,
     bias: torch.Tensor | None = None,
@@ -495,16 +498,19 @@ def _xpu_mxfp8_mm_out_rs(
     out_dtype: torch.dtype | None = None,
     use_fast_accum: bool = False,
 ) -> None:
-    """mm_out_op for RS: quantize A (bf16→fp8+e8m0) then fp8_gemm into out."""
-    a_fp8, a_scale = torch.ops.vllm.xpu_mxfp8_quantize(A, None)
+    """mm_out_op for RS: run MXFP8 fp8_gemm into out."""
+    if hasattr(torch.ops._xpu_C, "fp8_gemm_out"):
+        torch.ops._xpu_C.fp8_gemm_out(out, A, B, scale_a, scale_b, bias)
+        return
     result = torch.ops._xpu_C.fp8_gemm(
-        a_fp8, B, out_dtype or out.dtype, a_scale, scale_b, bias
+        A, B, out_dtype or out.dtype, scale_a, scale_b, bias
     )
     out.copy_(result)
 
 
 def fused_xpu_mxfp8_matmul_reduce_scatter_fake(
-    x: torch.Tensor,
+    x_fp8: torch.Tensor,
+    x_scale: torch.Tensor,
     weight: torch.Tensor,
     weight_scale: torch.Tensor,
     out_dtype: torch.dtype,
@@ -512,39 +518,54 @@ def fused_xpu_mxfp8_matmul_reduce_scatter_fake(
 ) -> torch.Tensor:
     world_size = c10d._resolve_process_group(group_name).size()
     return torch.empty(
-        [x.shape[0] // world_size, weight.shape[1]],
+        [x_fp8.shape[0] // world_size, weight.shape[1]],
         dtype=out_dtype,
-        device=x.device,
+        device=x_fp8.device,
     )
 
 
 def fused_xpu_mxfp8_matmul_reduce_scatter(
-    x: torch.Tensor,
+    x_fp8: torch.Tensor,
+    x_scale: torch.Tensor,
     weight: torch.Tensor,
     weight_scale: torch.Tensor,
     out_dtype: torch.dtype,
     group_name: str,
 ) -> torch.Tensor:
-    """XPU MXFP8: quantize x (bf16→fp8), fp8_gemm, reduce_scatter via symm_mem."""
-    return torch.distributed._symmetric_memory._fused_scaled_matmul_reduce_scatter_impl(
-        mm_out_op=_xpu_mxfp8_mm_out_rs,
-        A=x,
-        B=weight,
-        A_scale=None,  # computed dynamically inside mm_out_op via xpu_mxfp8_quantize
-        kwargs={
-            "scale_b": weight_scale,
-            "bias": None,
-            "scale_result": None,
-            "out_dtype": out_dtype,
-            "use_fast_accum": False,
-        },
-        out_dtype=out_dtype,
-        reduce_op="sum",
-        orig_scatter_dim=0,
-        scatter_dim_after_maybe_reshape=0,
-        group_name=group_name,
-        output_shape=[x.shape[0], weight.shape[1]],
+    """XPU MXFP8: fp8_gemm into symm-mem out, then reduce_scatter."""
+    if hasattr(torch.ops._xpu_C, "fp8_gemm_out"):
+        return torch.distributed._symmetric_memory._fused_scaled_matmul_reduce_scatter_impl(
+            mm_out_op=_xpu_mxfp8_mm_out_rs,
+            A=x_fp8,
+            B=weight,
+            A_scale=x_scale,
+            kwargs={
+                "scale_b": weight_scale,
+                "bias": None,
+                "scale_result": None,
+                "out_dtype": out_dtype,
+                "use_fast_accum": False,
+            },
+            out_dtype=out_dtype,
+            reduce_op="sum",
+            orig_scatter_dim=0,
+            scatter_dim_after_maybe_reshape=0,
+            group_name=group_name,
+            output_shape=[x_fp8.shape[0], weight.shape[1]],
+        )
+
+    group = c10d._resolve_process_group(group_name)
+    world_size = group.size()
+    mm = torch.ops._xpu_C.fp8_gemm(
+        x_fp8, weight, out_dtype, x_scale, weight_scale, None
     )
+    output = torch.empty(
+        [mm.shape[0] // world_size, mm.shape[1]], dtype=mm.dtype, device=mm.device
+    )
+    torch.distributed.reduce_scatter_tensor(
+        output, mm.contiguous(), op=torch.distributed.ReduceOp.SUM, group=group
+    )
+    return output
 
 
 def _xpu_mxfp8_mm_out_ag(
@@ -560,6 +581,9 @@ def _xpu_mxfp8_mm_out_ag(
     use_fast_accum: bool = False,
 ) -> None:
     """mm_out_op for AG: A is already-gathered fp8, scale_a is already-gathered e8m0."""
+    if hasattr(torch.ops._xpu_C, "fp8_gemm_out"):
+        torch.ops._xpu_C.fp8_gemm_out(out, A, B, scale_a, scale_b, bias)
+        return
     result = torch.ops._xpu_C.fp8_gemm(
         A, B, out_dtype or out.dtype, scale_a, scale_b, bias
     )
@@ -590,44 +614,33 @@ def fused_all_gather_xpu_mxfp8_matmul(
     out_dtype: torch.dtype,
     group_name: str,
 ) -> torch.Tensor:
-    """XPU MXFP8: fuse all_gather(fp8) + fp8_gemm via symm_mem.
+    """XPU MXFP8: all_gather(fp8, scale) + fp8_gemm.
 
-    scale_shard is small ([M_local, K//32]) so it is gathered upfront with a
-    regular all_gather before the fused all_gather+matmul.  The gathered scale
-    is then forwarded to mm_out_op as scale_a.
+    scale_shard is small ([M_local, K//32]) and oneCCL does not support
+    float8_e8m0fnu collectives, so gather it through an int8 view.
     """
     group = c10d._resolve_process_group(group_name)
     world_size = group.size()
 
-    # Gather scale first (small relative to fp8 activations)
-    scale_full = torch.empty(
+    # oneCCL does not support float8_e8m0fnu collectives; use int8 (same bits).
+    scale_shard_i8 = scale_shard.contiguous().view(torch.int8)
+    scale_full_i8 = torch.empty(
         [scale_shard.shape[0] * world_size] + list(scale_shard.shape[1:]),
-        dtype=scale_shard.dtype,
+        dtype=torch.int8,
         device=scale_shard.device,
     )
-    torch.distributed.all_gather_into_tensor(
-        scale_full, scale_shard.contiguous(), group=group
-    )
+    torch.distributed.all_gather_into_tensor(scale_full_i8, scale_shard_i8, group=group)
+    scale_full = scale_full_i8.view(scale_shard.dtype)
 
-    # Fuse all_gather(fp8_shard) with fp8_gemm
-    _, outputs = torch.distributed._symmetric_memory._fused_all_gather_matmul_impl(
-        mm_out_op=_xpu_mxfp8_mm_out_ag,
-        A_shard=fp8_shard,
-        Bs=[weight],
-        A_scale=scale_full,  # forwarded as scale_a to mm_out_op
-        kwargs_list=[{
-            "scale_b": weight_scale,
-            "bias": None,
-            "scale_result": None,
-            "out_dtype": out_dtype,
-            "use_fast_accum": False,
-        }],
-        out_dtypes=[out_dtype],
-        gather_dim=0,
-        group_name=group_name,
-        return_A=False,
+    fp8_full = torch.empty(
+        [fp8_shard.shape[0] * world_size] + list(fp8_shard.shape[1:]),
+        dtype=fp8_shard.dtype,
+        device=fp8_shard.device,
     )
-    return outputs[0]
+    _xpu_all_gather_dim0_chunked(fp8_full, fp8_shard, group)
+    return torch.ops._xpu_C.fp8_gemm(
+        fp8_full, weight, out_dtype, scale_full, weight_scale, None
+    )
 
 
 direct_register_custom_op(
@@ -683,7 +696,6 @@ class GEMMReduceScatterPattern(BasePattern):
         pm.register_replacement(
             pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
         )
-
 
 class AllGatherGEMMPattern(BasePattern):
     def get_inputs(self) -> list[torch.Tensor]:
@@ -1082,31 +1094,32 @@ class AllGatherXPUFp8GEMMPattern(BasePattern):
 
 
 class XPUMxFp8GEMMReduceScatterPattern(BasePattern):
-    """XPU: fuse xpu_mxfp8_quantize + fp8_gemm + reduce_scatter for MXFP8 block-32.
+    """XPU: fuse fp8_gemm + reduce_scatter for MXFP8 block-32.
 
     Matches:
-        x (bf16) -> xpu_mxfp8_quantize -> (x_fp8, x_scale)
-                 -> fp8_gemm(x_fp8, weight, dtype, x_scale, weight_scale, None)
-                 -> reduce_scatter
+        fp8_gemm(x_fp8, weight, dtype, x_scale, weight_scale, None)
+            -> reduce_scatter
     """
 
     def get_inputs(self) -> list[torch.Tensor]:
-        # x: model dtype (bf16), last dim must be divisible by MXFP8_BLOCK_SIZE=32
-        x = torch.empty([16, 32], device=self.device, dtype=self.dtype)
+        # x_fp8: local MXFP8 activation, last dim divisible by MXFP8_BLOCK_SIZE=32
+        x_fp8 = torch.empty([16, 32], device=self.device, dtype=FP8_DTYPE)
+        # x_scale: e8m0fnu scale, shape [M, K//32]
+        x_scale = torch.empty([16, 1], device=self.device, dtype=torch.float8_e8m0fnu)
         weight = (
             torch.empty([32, 16], device=self.device, dtype=FP8_DTYPE)
             .contiguous()
         )
         weight_scale = torch.empty([1, 1], device=self.device, dtype=torch.float8_e8m0fnu)
-        return [x, weight, weight_scale]
+        return [x_fp8, x_scale, weight, weight_scale]
 
     def register(self, pm_pass: PatternMatcherPass) -> None:
         def pattern(
-            x: torch.Tensor,
+            x_fp8: torch.Tensor,
+            x_scale: torch.Tensor,
             weight: torch.Tensor,
             weight_scale: torch.Tensor,
         ) -> torch.Tensor:
-            x_fp8, x_scale = torch.ops.vllm.xpu_mxfp8_quantize(x, None)
             mm = torch.ops._xpu_C.fp8_gemm.default(
                 x_fp8, weight, self.dtype, x_scale, weight_scale, None
             )
@@ -1118,12 +1131,18 @@ class XPUMxFp8GEMMReduceScatterPattern(BasePattern):
             )
 
         def replacement(
-            x: torch.Tensor,
+            x_fp8: torch.Tensor,
+            x_scale: torch.Tensor,
             weight: torch.Tensor,
             weight_scale: torch.Tensor,
         ) -> torch.Tensor:
             return torch.ops.vllm.fused_xpu_mxfp8_matmul_reduce_scatter.default(
-                x, weight, weight_scale, self.dtype, self.tp.device_group.group_name
+                x_fp8,
+                x_scale,
+                weight,
+                weight_scale,
+                self.dtype,
+                self.tp.device_group.group_name,
             )
 
         pm.register_replacement(
@@ -1182,6 +1201,37 @@ class AllGatherXPUMxFp8GEMMPattern(BasePattern):
 
         pm.register_replacement(
             pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+        def pattern_int8_scale_gather(
+            fp8_local: torch.Tensor,
+            scale_local: torch.Tensor,
+            weight: torch.Tensor,
+            weight_scale: torch.Tensor,
+        ) -> torch.Tensor:
+            fp8_full = torch.ops.vllm.all_gather.default(
+                fp8_local, 0, self.tp_size, self.tp.unique_name
+            )
+            scale_local_i8 = torch.ops.aten.view.dtype(scale_local, torch.int8)
+            scale_full_i8 = torch.ops.vllm.all_gather.default(
+                scale_local_i8,
+                0,
+                self.tp_size,
+                self.tp.unique_name,
+            )
+            scale_full = torch.ops.aten.view.dtype(
+                scale_full_i8, torch.float8_e8m0fnu
+            )
+            return torch.ops._xpu_C.fp8_gemm.default(
+                fp8_full, weight, self.dtype, scale_full, weight_scale, None
+            )
+
+        pm.register_replacement(
+            pattern_int8_scale_gather,
+            replacement,
+            self.get_inputs(),
+            pm.fwd_only,
+            pm_pass,
         )
 
 
@@ -1471,18 +1521,15 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
                 # than the existing FP8-style helper.
 
             if current_platform.is_xpu():
-                XPUFp8GEMMReduceScatterPattern(
+                # XPU W8A8 FP8 linear emits aten._scaled_mm, so the generic
+                # scaled-mm patterns above handle that path. MXFP8 checkpoints
+                # still emit xpu_mxfp8_quantize + _xpu_C.fp8_gemm.
+                XPUMxFp8GEMMReduceScatterPattern(
                     self.model_dtype, self.device
                 ).register(self.pm_pass)
-                AllGatherXPUFp8GEMMPattern(
+                AllGatherXPUMxFp8GEMMPattern(
                     self.model_dtype, self.device
                 ).register(self.pm_pass)
-                # XPUMxFp8GEMMReduceScatterPattern(
-                #     self.model_dtype, self.device
-                # ).register(self.pm_pass)
-                # AllGatherXPUMxFp8GEMMPattern(
-                #     self.model_dtype, self.device
-                # ).register(self.pm_pass)
 
         self.dump_patterns(config, self.pm_pass)
 
@@ -1498,5 +1545,113 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
     @VllmInductorPass.time_and_log
     def __call__(self, graph: fx.Graph) -> None:
         self.matched_count = self.pm_pass.apply(graph)
+        if current_platform.is_xpu():
+            self.matched_count += self._rewrite_all_gather_xpu_mxfp8_matmul(graph)
         VllmPatternMatcherPass.match_table[self.pass_name] += self.matched_count
         logger.info("Replaced %s patterns", self.matched_count)
+
+    def _rewrite_all_gather_xpu_mxfp8_matmul(self, graph: fx.Graph) -> int:
+        """Fuse the XPU MXFP8 all-gather + GEMM graph shape emitted by SP.
+
+        The input scale is Float8_e8m0fnu, which XCCL cannot gather directly.
+        SP therefore gathers it through an int8 view:
+            all_gather(fp8_local)
+            view(all_gather(view(scale_local, int8)), float8_e8m0fnu)
+            fp8_gemm(...)
+        """
+        all_gather_op = torch.ops.vllm.all_gather.default
+        view_dtype_op = torch.ops.aten.view.dtype
+        fp8_gemm_op = torch.ops._xpu_C.fp8_gemm.default
+        fused_op = torch.ops.vllm.fused_all_gather_xpu_mxfp8_matmul.default
+        count = 0
+
+        for gemm in list(graph.find_nodes(op="call_function", target=fp8_gemm_op)):
+            if len(gemm.args) < 5:
+                continue
+
+            fp8_full = gemm.args[0]
+            scale_full = gemm.args[3]
+            if not (
+                isinstance(fp8_full, fx.Node)
+                and fp8_full.op == "call_function"
+                and fp8_full.target == all_gather_op
+            ):
+                continue
+
+            scale_local: fx.Node | None = None
+            scale_nodes_to_erase: list[fx.Node] = []
+
+            if (
+                isinstance(scale_full, fx.Node)
+                and scale_full.op == "call_function"
+                and scale_full.target == view_dtype_op
+                and len(scale_full.args) == 2
+                and scale_full.args[1] == torch.float8_e8m0fnu
+            ):
+                scale_full_i8 = scale_full.args[0]
+                if not (
+                    isinstance(scale_full_i8, fx.Node)
+                    and scale_full_i8.op == "call_function"
+                    and scale_full_i8.target == all_gather_op
+                ):
+                    continue
+                if (
+                    fp8_full.args[1:] != scale_full_i8.args[1:]
+                    or fp8_full.kwargs != scale_full_i8.kwargs
+                ):
+                    continue
+                scale_local_i8 = scale_full_i8.args[0]
+                if not (
+                    isinstance(scale_local_i8, fx.Node)
+                    and scale_local_i8.op == "call_function"
+                    and scale_local_i8.target == view_dtype_op
+                    and len(scale_local_i8.args) == 2
+                    and scale_local_i8.args[1] == torch.int8
+                ):
+                    continue
+                scale_local = scale_local_i8.args[0]
+                if not isinstance(scale_local, fx.Node):
+                    continue
+                scale_nodes_to_erase = [scale_full, scale_full_i8, scale_local_i8]
+            elif (
+                isinstance(scale_full, fx.Node)
+                and scale_full.op == "call_function"
+                and scale_full.target == all_gather_op
+            ):
+                if (
+                    fp8_full.args[1:] != scale_full.args[1:]
+                    or fp8_full.kwargs != scale_full.kwargs
+                ):
+                    continue
+                scale_local = scale_full.args[0]
+                if not isinstance(scale_local, fx.Node):
+                    continue
+                scale_nodes_to_erase = [scale_full]
+            else:
+                continue
+
+            fp8_local = fp8_full.args[0]
+            if not isinstance(fp8_local, fx.Node):
+                continue
+
+            with graph.inserting_before(gemm):
+                fused = graph.call_function(
+                    fused_op,
+                    args=(
+                        fp8_local,
+                        scale_local,
+                        gemm.args[1],
+                        gemm.args[4],
+                        gemm.args[2],
+                        get_tp_group().device_group.group_name,
+                    ),
+                )
+            fused.meta.update(gemm.meta)
+            gemm.replace_all_uses_with(fused)
+
+            for node in [gemm, *scale_nodes_to_erase, fp8_full]:
+                if not node.users:
+                    graph.erase_node(node)
+            count += 1
+
+        return count
