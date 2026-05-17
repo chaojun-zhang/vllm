@@ -1172,21 +1172,21 @@ class AllGatherXPUMxFp8GEMMPattern(BasePattern):
         return [fp8_local, scale_local, weight, weight_scale]
 
     def register(self, pm_pass: PatternMatcherPass) -> None:
-        def pattern(
-            fp8_local: torch.Tensor,
-            scale_local: torch.Tensor,
-            weight: torch.Tensor,
-            weight_scale: torch.Tensor,
-        ) -> torch.Tensor:
-            fp8_full = torch.ops.vllm.all_gather.default(
-                fp8_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
-            )
-            scale_full = torch.ops.vllm.all_gather.default(
-                scale_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
-            )
-            return torch.ops._xpu_C.fp8_gemm.default(
-                fp8_full, weight, self.dtype, scale_full, weight_scale, None
-            )
+        # def pattern(
+        #     fp8_local: torch.Tensor,
+        #     scale_local: torch.Tensor,
+        #     weight: torch.Tensor,
+        #     weight_scale: torch.Tensor,
+        # ) -> torch.Tensor:
+        #     fp8_full = torch.ops.vllm.all_gather.default(
+        #         fp8_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+        #     )
+        #     scale_full = torch.ops.vllm.all_gather.default(
+        #         scale_local, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+        #     )
+        #     return torch.ops._xpu_C.fp8_gemm.default(
+        #         fp8_full, weight, self.dtype, scale_full, weight_scale, None
+        #     )
 
         def replacement(
             fp8_local: torch.Tensor,
@@ -1199,11 +1199,11 @@ class AllGatherXPUMxFp8GEMMPattern(BasePattern):
                 self.dtype, self.tp.device_group.group_name
             )
 
-        pm.register_replacement(
-            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
-        )
+        # pm.register_replacement(
+        #     pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        # )
 
-        def pattern_int8_scale_gather(
+        def pattern(
             fp8_local: torch.Tensor,
             scale_local: torch.Tensor,
             weight: torch.Tensor,
@@ -1227,7 +1227,7 @@ class AllGatherXPUMxFp8GEMMPattern(BasePattern):
             )
 
         pm.register_replacement(
-            pattern_int8_scale_gather,
+            pattern,
             replacement,
             self.get_inputs(),
             pm.fwd_only,
