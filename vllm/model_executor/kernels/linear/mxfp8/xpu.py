@@ -30,7 +30,12 @@ class XPUMxFp8LinearKernel(Mxfp8LinearKernel):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         weight_scale = layer.weight_scale.view(torch.float8_e8m0fnu)
         weight_scale = weight_scale.t().contiguous()
-        replace_parameter(layer, "weight", layer.weight.t())
+        # Store weight as C-contiguous [K, N] so its data_ptr is GPU-allocator
+        # aligned (64-byte).  Without .contiguous() the stored tensor is a
+        # Fortran-order view sharing the checkpoint's potentially-misaligned
+        # storage; that triggers oneDNN alignment checks during inference.
+        # This one-time copy at load time avoids any copy at inference time.
+        replace_parameter(layer, "weight", layer.weight.t().contiguous())
         replace_parameter(layer, "weight_scale", weight_scale.data)
 
     def apply_weights(

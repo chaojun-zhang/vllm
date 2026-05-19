@@ -68,23 +68,61 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
         super().__init__(c, layer_param_names)
 
     def _ensure_kn_weight_layout(self, layer: torch.nn.Module) -> None:
-        expected_shape = (
-            getattr(layer, "input_size_per_partition", self.config.weight_shape[1]),
-            getattr(layer, "output_size_per_partition", self.config.weight_shape[0]),
-        )
-        if layer.weight.shape == expected_shape:
-            return
-        if layer.weight.shape == expected_shape[::-1]:
-            replace_parameter(layer, "weight", layer.weight.data.t())
-            return
+        """Ensure weight is stored as C-contiguous [K, N] (KN layout).
+
+        Checkpoints store weight as [N, K] (out_channels × in_channels).
+        fp8_gemm requires [K, N] (in_channels × out_channels), C-contiguous.
+
+        Fp8LinearMethod.process_weights_after_loading (fp8.py) calls
+        weight.t() before calling this method, so we may receive:
+          • [N, K] C-contiguous     ← direct from checkpoint (no prior .t())
+          • [K, N] Fortran-order    ← after fp8.py's weight.t() (production)
+          • [K, N] C-contiguous     ← already done (no-op)
+
+        Square weights (K == N):
+          shape is identical for [K,N] and [N,K].  We distinguish them by
+          contiguity: Fortran-order means fp8.py already transposed → make
+          contiguous.  C-contiguous means not yet transposed → transpose.
+        """
+        K = getattr(layer, "input_size_per_partition", self.config.weight_shape[1])
+        N = getattr(layer, "output_size_per_partition", self.config.weight_shape[0])
+        w = layer.weight
+
+        if K != N:
+            # Non-square: shape uniquely identifies the layout.
+            if w.shape == (K, N):
+                if not w.is_contiguous():
+                    replace_parameter(layer, "weight", w.contiguous())
+                return
+            if w.shape == (N, K):
+                replace_parameter(layer, "weight", w.t().contiguous())
+                return
+        else:
+            # Square (K == N): use contiguity to distinguish.
+            #   Fortran-order  → fp8.py already transposed [N,K]→[K,N]; just align.
+            #   C-contiguous   → still in [N,K] checkpoint format; transpose.
+            if w.shape == (K, N):
+                if not w.is_contiguous():
+                    # Production path: fp8.py did .t(), weight is [K,N] Fortran.
+                    replace_parameter(layer, "weight", w.contiguous())
+                else:
+                    # Direct checkpoint path: weight is [N,K] C-contiguous.
+                    replace_parameter(layer, "weight", w.t().contiguous())
+                return
+
         raise ValueError(
-            "XPUFP8ScaledMM expects weight shape "
-            f"{expected_shape} or {expected_shape[::-1]}, "
-            f"but got {tuple(layer.weight.shape)}"
+            f"XPUFP8ScaledMM expects weight shape ({K},{N}) or ({N},{K}), "
+            f"but got {tuple(w.shape)}"
         )
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         self._ensure_kn_weight_layout(layer)
+        # fp8_gemm routes on scale dtype (float32), not shape:
+        #   per-tensor weight_scale [1]  → keep as [1]  (numel==1 branch)
+        #   per-channel weight_scale [N] → keep as [N]  (per-channel branch)
+        ws = layer.weight_scale
+        if ws.numel() == 1:
+            replace_parameter(layer, "weight_scale", ws.reshape(1))
 
     def apply_scaled_mm(
         self,
@@ -97,19 +135,14 @@ class XPUFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
         bias: torch.Tensor | None,
         output_shape: list,
     ) -> torch.Tensor:
-        mat2 = B.t().contiguous().t()
-        scale_a = As.reshape(-1, 1).expand(A.shape[0], 1).contiguous()
-        scale_b = Bs.reshape(1, -1).expand(1, mat2.shape[1]).contiguous()
-        output = torch._scaled_mm(
-            A,
-            mat2,
-            scale_a=scale_a,
-            scale_b=scale_b,
-            bias=bias,
-            out_dtype=out_dtype,
-        )
-        if type(output) is tuple and len(output) == 2:
-            output = output[0]
+        # B is C-contiguous [K, N] from process_weights_after_loading.
+        # fp8_gemm routes on scale dtype (float32) and numel:
+        #   As [1]   → per-tensor  (numel==1 branch)
+        #   As [M,1] → per-token   (group={1,K} branch, broadcast across K)
+        #   Bs [1]   → per-tensor
+        #   Bs [N]   → per-channel (mask=bit1 branch)
+        # No shape manipulation needed here.
+        output = torch.ops._xpu_C.fp8_gemm(A, B, out_dtype, As, Bs, bias)
         return output.view(*output_shape)
 
 
@@ -157,26 +190,6 @@ class XPUW8A16FP8LinearKernel(XPUFP8ScaledMMLinearKernel):
 
         weight_scale = layer.weight_scale.t().contiguous()
         replace_parameter(layer, "weight_scale", weight_scale.data)
-
-    def apply_weights(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        bias: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        w, w_s, x_s, _ = self._get_layer_params(layer)
-        out_dtype = x.dtype if self.config.out_dtype is None else self.config.out_dtype
-        output_shape = [*x.shape[:-1], w.shape[1]]
-        return self.apply_scaled_mm(
-            A=x.view(-1, x.shape[-1]),
-            B=w,
-            out_dtype=out_dtype,
-            As=x_s,
-            Bs=w_s,
-            bias=bias,
-            output_shape=output_shape,
-        )
-        replace_parameter(layer, "weight", layer.weight.data.t())
 
     def apply_weights(
             self,

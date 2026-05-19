@@ -302,15 +302,8 @@ class TestAGXPUMxFp8GEMMModel(torch.nn.Module):
         return [torch.ops.vllm.fused_all_gather_xpu_mxfp8_matmul.default]
 
 
-class TestXPUFp8GEMMRSModel(torch.nn.Module):
+class TestXPUFp8GEMMRSModel(TestScaledMMRSModel):
     """XPU scaled_mm/xpu.py W8A8 fp8_gemm + reduce_scatter."""
-
-    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.dtype = dtype
-        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
-        self.weight_scale = torch.empty([1], dtype=torch.float32)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_fp8, x_scale = ops.scaled_fp8_quant(
@@ -321,96 +314,44 @@ class TestXPUFp8GEMMRSModel(torch.nn.Module):
         )
         return tensor_model_parallel_reduce_scatter(out, dim=0)
 
-    def ops_in_model_before(self):
-        return [torch.ops.vllm.reduce_scatter.default]
+    def forward(self, input: torch.Tensor):
+        """
+        Forward pass implementing the scaled_mm + reduce scatter in the FX graph
 
-    def ops_in_model_after(self):
-        return [torch.ops.vllm.fused_xpu_fp8_matmul_reduce_scatter.default]
-
-
-class TestXPUStaticFp8GEMMRSModel(torch.nn.Module):
-    """XPU static FP8 fp8_gemm + reduce_scatter."""
-
-    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.dtype = dtype
-        self.input_scale = torch.ones([1], dtype=torch.float32)
-        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
-        self.weight_scale = torch.ones([1], dtype=torch.float32)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_fp8, _ = ops.scaled_fp8_quant(x, self.input_scale)
-        out = torch.ops._xpu_C.fp8_gemm(
-            x_fp8, self.weight, self.dtype, self.input_scale, self.weight_scale, None
+        """
+        fp8_input = input.to(FP8_DTYPE)
+        scale_a = torch.ones(input.shape[0], 1, dtype=torch.float32)
+        scaled_mm = torch.ops._xpu_C.fp8_gemm(
+            fp8_input, self.weight, self.dtype, scale_a, self.scale_b, None
         )
-        return tensor_model_parallel_reduce_scatter(out, dim=0)
-
-    def ops_in_model_before(self):
-        return [torch.ops.vllm.reduce_scatter.default]
-
-    def ops_in_model_after(self):
-        return [torch.ops.vllm.fused_xpu_fp8_matmul_reduce_scatter.default]
+        reduce_scatter = tensor_model_parallel_reduce_scatter(scaled_mm, dim=0)
+        return reduce_scatter
 
 
-class TestAGXPUFp8GEMMModel(torch.nn.Module):
+class TestAGXPUFp8GEMMModel(TestAGScaledMMModel):
     """XPU scaled_mm/xpu.py W8A8 all_gather(fp8, scale) + fp8_gemm."""
 
-    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.dtype = dtype
-        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
-        self.weight_scale = torch.empty([1], dtype=torch.float32)
+    def forward(self, input: torch.Tensor):
+        """
+        Forward pass implementing the all gather + scaled_mm in the FX graph
+        """
+        # Reshape input
+        fp8_input = input.to(FP8_DTYPE)
+        all_gather = tensor_model_parallel_all_gather(fp8_input, dim=0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        fp8_local, scale_local = ops.scaled_fp8_quant(
-            x, None, use_per_token_if_dynamic=True
+        scale_a = torch.ones(all_gather.shape[0], 1, dtype=torch.float32)
+        scaled_mm =  torch.ops._xpu_C.fp8_gemm(
+            all_gather, self.weight, self.dtype, scale_a, self.scale_b, None
         )
-        fp8_full = tensor_model_parallel_all_gather(fp8_local, dim=0)
-        scale_full = tensor_model_parallel_all_gather(scale_local, dim=0)
-        return torch.ops._xpu_C.fp8_gemm(
-            fp8_full, self.weight, self.dtype, scale_full, self.weight_scale, None
-        )
-
-    def ops_in_model_before(self):
-        return [torch.ops.vllm.all_gather.default]
-
-    def ops_in_model_after(self):
-        return [torch.ops.vllm.fused_all_gather_xpu_fp8_matmul.default]
-
-
-class TestAGXPUStaticFp8GEMMModel(torch.nn.Module):
-    """XPU static FP8 all_gather(fp8) + fp8_gemm."""
-
-    def __init__(self, hidden_size: int = 16, dtype: torch.dtype = torch.bfloat16):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.dtype = dtype
-        self.input_scale = torch.ones([1], dtype=torch.float32)
-        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
-        self.weight_scale = torch.ones([1], dtype=torch.float32)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        fp8_local, _ = ops.scaled_fp8_quant(x, self.input_scale)
-        fp8_full = tensor_model_parallel_all_gather(fp8_local, dim=0)
-        return torch.ops._xpu_C.fp8_gemm(
-            fp8_full, self.weight, self.dtype, self.input_scale, self.weight_scale, None
-        )
-
-    def ops_in_model_before(self):
-        return [torch.ops.vllm.all_gather.default]
-
-    def ops_in_model_after(self):
-        return [torch.ops.vllm.fused_all_gather_xpu_fp8_matmul.default]
+        return scaled_mm
 
 
 @multi_gpu_test(num_gpus=2)
 @pytest.mark.parametrize(
     "test_model",
     [
-        TestScaledMMRSModel,
-        TestAGScaledMMModel,
+        TestXPUFp8GEMMRSModel,
+        TestAGXPUFp8GEMMModel,
     ],
 )
 @pytest.mark.parametrize("batch_size", [8])
