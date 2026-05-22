@@ -43,7 +43,7 @@ if current_platform.is_cuda_alike():
     from .utility.scatter_split_replace import ScatterSplitReplacementPass
     from .utility.split_coalescing import SplitCoalescingPass
 
-if current_platform.is_cuda():
+if current_platform.is_cuda() or current_platform.is_xpu():
     from .fusion.collective_fusion import AsyncTPPass
 
 if current_platform.is_cuda():
