@@ -430,6 +430,53 @@ def fused_all_gather_xpu_fp8_matmul(
     out_dtype: torch.dtype | None = None,
     dynamic: bool = False,
 ) -> torch.Tensor:
+    # MXFP8 block-wise scale (e8m0fnu): _fused_all_gather_matmul_impl only
+    # supports per-token scales (last dim == 1 after gathering).  Use pipelined
+    # multi all-gather to simultaneously gather activations and block-wise scale.
+    # XCCL doesn't support e8m0fnu; view to uint8 (same 8-bit storage, any shape)
+    # for the collective and view back to e8m0fnu in the consumer.
+    if A_scale.dtype == torch.float8_e8m0fnu:
+        assert gather_dim == 0, (
+            "XPU MXFP8 fused all_gather matmul only supports gather_dim=0"
+        )
+        group = c10d._resolve_process_group(group_name)
+        world_size = group.size()
+        output = A_shard.new_empty(
+            A_shard.shape[0] * world_size,
+            B.shape[1],
+            dtype=out_dtype or torch.bfloat16,
+        )
+        output_shards = output.chunk(world_size)
+        A_gathered = A_shard.new_empty(A_shard.shape[0] * world_size, A_shard.shape[1])
+        # e8m0fnu is not supported by XCCL.  View as uint8 (same 8-bit
+        # storage) so the collective transfers the raw bytes unchanged,
+        # regardless of the scale tensor's last-dimension size.
+        A_scale_u8 = A_scale.view(torch.uint8)
+        A_scale_u8_gathered = A_scale_u8.new_empty(
+            A_scale_u8.shape[0] * world_size, A_scale_u8.shape[1]
+        )
+
+        def _mxfp8_consumer(shards: list[torch.Tensor], rank: int) -> None:
+            # Re-interpret the uint8 scale shard as e8m0fnu before the GEMM.
+            scale_shard = shards[1].view(torch.float8_e8m0fnu)
+            _xpu_fp8_mm_out(
+                shards[0],
+                B,
+                scale_a=scale_shard,
+                scale_b=B_scale,
+                out=output_shards[rank],
+                bias=None,
+                dynamic=True,
+            )
+
+        torch.distributed._symmetric_memory._pipelined_multi_all_gather_and_consume(
+            [A_shard, A_scale_u8],
+            _mxfp8_consumer,
+            [A_gathered, A_scale_u8_gathered],
+            group_name,
+            False,
+        )
+        return output
 
     _, outputs = torch.distributed._symmetric_memory._fused_all_gather_matmul_impl(
         mm_out_op=_xpu_fp8_mm_out,
@@ -1302,6 +1349,27 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
 
     @VllmInductorPass.time_and_log
     def __call__(self, graph: fx.Graph) -> None:
-        self.matched_count = self.pm_pass.apply(graph)
+        # PyTorch's PatternMatcherPass.apply skips any FX node whose inputs
+        # contain float8_e8m0fnu tensors (via fallback_node_due_to_unsupported_type).
+        # On XPU, _xpu_C.fp8_gemm natively handles e8m0fnu scale tensors, so we
+        # temporarily allow it as a pattern anchor.
+        if current_platform.is_xpu() and hasattr(torch.ops._xpu_C, "fp8_gemm"):
+            import torch._inductor.pattern_matcher as _pm_mod
+
+            _fp8_gemm_op = torch.ops._xpu_C.fp8_gemm.default
+            _orig_fallback = _pm_mod.fallback_node_due_to_unsupported_type
+
+            def _patched_fallback(node: fx.Node, allow_cpu_inputs: bool = True) -> bool:
+                if getattr(node, "target", None) is _fp8_gemm_op:
+                    return False
+                return _orig_fallback(node, allow_cpu_inputs)
+
+            _pm_mod.fallback_node_due_to_unsupported_type = _patched_fallback
+            try:
+                self.matched_count = self.pm_pass.apply(graph)
+            finally:
+                _pm_mod.fallback_node_due_to_unsupported_type = _orig_fallback
+        else:
+            self.matched_count = self.pm_pass.apply(graph)
         VllmPatternMatcherPass.match_table[self.pass_name] += self.matched_count
         logger.info("Replaced %s patterns", self.matched_count)

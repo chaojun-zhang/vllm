@@ -226,6 +226,72 @@ class TestAGCutlassScaledMMModel(_BaseScaledMMModel):
         return [torch.ops.symm_mem.fused_all_gather_scaled_matmul.default]
 
 
+# ---------------------------------------------------------------------------
+# XPU MXFP8 patterns
+# ---------------------------------------------------------------------------
+
+MXFP8_E8M0_DTYPE = torch.float8_e8m0fnu
+
+
+class TestXPUMxFp8GEMMRSModel(torch.nn.Module):
+    def __init__(self, hidden_size: int = 32, dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        # weight is [K, N] (transposed, as done by process_weights_after_loading)
+        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
+        # weight_scale: [K//32, N]
+        self.weight_scale = torch.empty(
+            [hidden_size // 32, hidden_size], dtype=MXFP8_E8M0_DTYPE
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_fp8, x_scale = torch.ops.vllm.xpu_mxfp8_quantize(x, None)
+        out = torch.ops._xpu_C.fp8_gemm(
+            x_fp8, self.weight, self.dtype, x_scale, self.weight_scale, None
+        )
+        return tensor_model_parallel_reduce_scatter(out, dim=0)
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.reduce_scatter.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.fused_xpu_fp8_matmul_reduce_scatter.default]
+
+
+class TestAGXPUMxFp8GEMMModel(torch.nn.Module):
+    """XPU: all_gather(fp8) + all_gather(scale) + fp8_gemm
+    → fused_all_gather_xpu_mxfp8_matmul.
+
+    Uses xpu_mxfp8_quantize to produce fp8_local/scale_local from a bf16 input,
+    then all_gathers both — this mirrors the graph produced by the SP pass.
+    """
+
+    def __init__(self, hidden_size: int = 32, dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
+        self.weight_scale = torch.empty(
+            [hidden_size // 32, hidden_size], dtype=MXFP8_E8M0_DTYPE
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Quantize on local shard first (mirrors SP pass output).
+        fp8_local, scale_local = torch.ops.vllm.xpu_mxfp8_quantize(x, None)
+        # Two all_gathers: one for fp8 data, one for block-wise scale.
+        fp8_full = tensor_model_parallel_all_gather(fp8_local, dim=0)
+        scale_full = tensor_model_parallel_all_gather(scale_local, dim=0)
+        return torch.ops._xpu_C.fp8_gemm(
+            fp8_full, self.weight, self.dtype, scale_full, self.weight_scale, None
+        )
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_gather.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.fused_all_gather_xpu_fp8_matmul.default]
+
 
 class TestXPUFp8GEMMRSModel(_BaseScaledMMModel):
     def forward(self, input: torch.Tensor):
@@ -350,6 +416,49 @@ def test_async_tp_pass_replace_xpu_fp8(
             dtype,
             dynamic,
             "RedHatAI/Llama-3.2-1B-Instruct-FP8",
+        ),
+        nprocs=num_processes,
+    )
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize(
+    "test_model",
+    [
+        TestXPUMxFp8GEMMRSModel,
+        TestAGXPUMxFp8GEMMModel,
+    ],
+)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+@pytest.mark.parametrize("hidden_size", [32])  # must be multiple of 32 for MXFP8
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dynamic", [True, False])
+@pytest.mark.skipif(
+    envs.VLLM_TARGET_DEVICE not in ["xpu"],
+    reason="XPU MXFP8 AsyncTP patterns only run on XPU",
+)
+def test_async_tp_pass_replace_xpu_mxfp8(
+    test_model,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype: torch.dtype,
+    dynamic: bool,
+):
+    """Test XPU MXFP8 quantize + fp8_gemm + collective fusion patterns."""
+    num_processes = 2
+    torch.multiprocessing.spawn(
+        async_tp_pass_on_test_model,
+        args=(
+            num_processes,
+            test_model,
+            batch_size,
+            seq_len,
+            hidden_size,
+            dtype,
+            dynamic,
+            "Yi30/Llama-3.2-1B-Instruct-MXFP8-llmc",
         ),
         nprocs=num_processes,
     )
