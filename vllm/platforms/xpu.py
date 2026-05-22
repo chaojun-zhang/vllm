@@ -216,7 +216,6 @@ class XPUPlatform(Platform):
         # Disable fusion passes not yet supported on XPU.
         pass_config = compilation_config.pass_config
         fusion_passes_to_disable = {
-            "enable_sp": "Sequence parallelism",
             "fuse_gemm_comms": "Async TP",
             "fuse_allreduce_rms": "AllReduce + RMSNorm fusion",
             "fuse_norm_quant": "RMSNorm + quant fusion",
@@ -224,6 +223,7 @@ class XPUPlatform(Platform):
             "fuse_attn_quant": "Attention + quant fusion",
             "fuse_act_padding": "Activation + padding fusion",
             "fuse_rope_kvcache": "RoPE + KV cache fusion",
+            "fuse_rope_kvcache_cat_mla": "RoPE + KV Cache cat mla fusion",
         }
         for flag, feature_name in fusion_passes_to_disable.items():
             if getattr(pass_config, flag):
@@ -328,6 +328,15 @@ class XPUPlatform(Platform):
         return torch.float8_e4m3fn
 
     @classmethod
+    def use_custom_op_collectives(cls) -> bool:
+        # XPU registers torch.ops.vllm.{all_reduce,reduce_scatter,all_gather}
+        # with dispatch_key="XPU" and FakeTensor implementations, so the
+        # SequenceParallelismPass pattern matcher can trace clean FX graphs
+        # (no TorchBind ProcessGroup nodes).  The custom ops internally
+        # delegate to XpuCommunicator, so runtime behaviour is unchanged.
+        return True
+
+    @classmethod
     def is_data_center_gpu(cls) -> bool:
         device_name = cls.get_device_name().lower()
         return device_name.count("data center gpu") > 0
@@ -409,3 +418,4 @@ class XPUPlatform(Platform):
     @classmethod
     def num_compute_units(cls, device_id: int = 0) -> int:
         return torch.xpu.get_device_properties(device_id).max_compute_units
+

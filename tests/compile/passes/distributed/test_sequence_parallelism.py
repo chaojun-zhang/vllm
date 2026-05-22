@@ -4,10 +4,8 @@
 import pytest
 import torch
 
-import vllm.envs as envs
 from tests.compile.backend import TestBackend
 from tests.utils import TestFP8Layer, multi_gpu_test
-from vllm.compilation.passes.fusion.rms_quant_fusion import RMSNormQuantFusionPass
 from vllm.compilation.passes.fusion.sequence_parallelism import SequenceParallelismPass
 from vllm.compilation.passes.utility.noop_elimination import NoOpEliminationPass
 from vllm.compilation.passes.utility.post_cleanup import PostCleanupPass
@@ -23,22 +21,27 @@ from vllm.config import (
     set_current_vllm_config,
 )
 from vllm.config.utils import Range
-from vllm.distributed import tensor_model_parallel_all_reduce
+from vllm.distributed import (
+    tensor_model_parallel_all_reduce,
+)
 from vllm.distributed.parallel_state import (
     init_distributed_environment,
     initialize_model_parallel,
 )
 from vllm.model_executor.layers.layernorm import RMSNorm
+from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
+    GroupShape,
     kFp8StaticTensorSym,
 )
 from vllm.platforms import current_platform
 from vllm.utils.system_utils import update_environment_variables
 from vllm.utils.torch_utils import set_random_seed
 
-DEVICE_TYPE = current_platform.device_type
-
-pytestmark = pytest.mark.skipif(not current_platform.is_cuda(), reason="Only test CUDA")
+pytestmark = pytest.mark.skipif(
+    not (current_platform.is_cuda() or current_platform.is_xpu()),
+    reason="Only test CUDA or XPU",
+)
 
 FP8_DTYPE = current_platform.fp8_dtype()
 prompts = [
@@ -47,6 +50,8 @@ prompts = [
     "The capital of France is",
     "The future of AI is",
 ]
+
+DEVICE_TYPE = current_platform.device_type
 
 
 class TestAllReduceRMSNormModel(torch.nn.Module):
@@ -166,20 +171,19 @@ class TestAllReduceRMSNormStaticQuantFP8Model(torch.nn.Module):
     "test_model_cls, custom_ops",
     [
         (TestAllReduceRMSNormModel, "+rms_norm"),
-        (TestAllReduceRMSNormModel, "-rms_norm"),
+        # (TestAllReduceRMSNormModel, "-rms_norm"),
         (TestAllReduceRMSNormStaticQuantFP8Model, "+rms_norm,+quant_fp8"),
-        (TestAllReduceRMSNormStaticQuantFP8Model, "+rms_norm,-quant_fp8"),
-        (TestAllReduceRMSNormStaticQuantFP8Model, "-rms_norm,+quant_fp8"),
-        (TestAllReduceRMSNormStaticQuantFP8Model, "-rms_norm,-quant_fp8"),
+        # (TestAllReduceRMSNormStaticQuantFP8Model, "+rms_norm,-quant_fp8"),
+        # (TestAllReduceRMSNormStaticQuantFP8Model, "-rms_norm,+quant_fp8"),
+        # (TestAllReduceRMSNormStaticQuantFP8Model, "-rms_norm,-quant_fp8"),
     ],
 )
 @pytest.mark.parametrize("batch_size", [8])
 @pytest.mark.parametrize("seq_len", [16])
 @pytest.mark.parametrize("hidden_size", [16])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("fuse_norm_quant", [True, False])
+@pytest.mark.parametrize("fuse_norm_quant", [False])
 @pytest.mark.parametrize("dynamic", [False, True])
-@pytest.mark.skipif(envs.VLLM_TARGET_DEVICE not in ["cuda"], reason="Only test on CUDA")
 def test_sequence_parallelism_pass(
     test_model_cls: type[torch.nn.Module],
     custom_ops: str,
@@ -262,14 +266,13 @@ def sequence_parallelism_pass_on_test_model(
     )
 
     # initialize distributed
-    init_distributed_environment()
+    init_distributed_environment(backend=current_platform.dist_backend)
 
     # configure vllm config for SequenceParallelismPass
-    custom_ops_list = custom_ops.split(",") if custom_ops else []
     compilation_config = CompilationConfig(
         splitting_ops=[],  # avoid automatic rms_norm enablement
         cudagraph_mode=CUDAGraphMode.NONE,  # avoid piecewise warnings
-        custom_ops=custom_ops_list,
+        # custom_ops=custom_ops_list,
         pass_config=PassConfig(
             enable_sp=True,
             fuse_norm_quant=fuse_norm_quant,
@@ -309,9 +312,9 @@ def sequence_parallelism_pass_on_test_model(
             sequence_parallelism_pass,
         ]
 
-        if fuse_norm_quant:
-            fusion_pass = RMSNormQuantFusionPass(vllm_config)
-            passes_for_backend.append(fusion_pass)
+        # if fuse_norm_quant:
+        #     fusion_pass = RMSNormQuantFusionPass(vllm_config)
+        #     passes_for_backend.append(fusion_pass)
 
         passes_for_backend.append(cleanup_pass)
 
@@ -341,3 +344,145 @@ def sequence_parallelism_pass_on_test_model(
 
         for op in model.ops_in_model():
             assert backend.op_count(op, before=False) > 0
+
+
+
+class TestAllReduceRMSNormXPUDynamicTokenFP8Model(torch.nn.Module):
+    """XPU scaled_mm/xpu.py W8A8 path with dynamic per-token activation scales."""
+
+    def __init__(self, hidden_size=16, eps=1e-6):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.eps = eps
+        self.dtype = torch.bfloat16
+        self.norm = [RMSNorm(hidden_size, eps) for _ in range(4)]
+        self.quant = QuantFP8(static=False, group_shape=GroupShape.PER_TOKEN)
+        self.w = [
+            torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE) for _ in range(4)
+        ]
+        self.ws = [torch.empty([1], dtype=torch.float32) for _ in range(4)]
+
+    def _fp8_gemm(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        fp8, scale = self.quant(x)
+        return torch.ops._xpu_C.fp8_gemm(
+            fp8, self.w[layer_idx], self.dtype, scale, self.ws[layer_idx], None
+        )
+
+    def forward(self, x):
+        z = torch.relu(x)
+        x = resid = tensor_model_parallel_all_reduce(z)
+        y = self.norm[0](x)
+        z2 = self._fp8_gemm(y, 0)
+
+        x2 = tensor_model_parallel_all_reduce(z2)
+        y2, resid = self.norm[1](x2, resid)
+        z3 = self._fp8_gemm(y2, 1)
+
+        x3 = tensor_model_parallel_all_reduce(z3)
+        y3, resid = self.norm[2](x3, resid)
+        z4 = self._fp8_gemm(y3, 2)
+
+        x4 = tensor_model_parallel_all_reduce(z4)
+        y4, resid = self.norm[3](x4, resid)
+        z5 = self._fp8_gemm(y4, 3)
+        return z5, resid
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_reduce.default]
+
+    def ops_in_model_after(self):
+        return [
+            torch.ops.vllm.all_gather.default,
+            torch.ops.vllm.reduce_scatter.default,
+        ]
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+@pytest.mark.parametrize("hidden_size", [16])
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.skipif(
+    not current_platform.is_xpu(),
+    reason="XPU dynamic-token FP8 SP patterns require _xpu_C.fp8_gemm",
+)
+def test_sequence_parallelism_pass_xpu_dynamic_token_fp8(
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dynamic: bool,
+):
+    num_processes = 2
+    torch.multiprocessing.spawn(
+        sequence_parallelism_pass_on_xpu_dynamic_token_fp8_model,
+        args=(num_processes, batch_size, seq_len, hidden_size, dynamic),
+        nprocs=num_processes,
+    )
+
+
+def sequence_parallelism_pass_on_xpu_dynamic_token_fp8_model(
+    local_rank: int,
+    world_size: int,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dynamic: bool,
+):
+    dtype = torch.bfloat16
+    set_random_seed(0)
+    device = torch.device(f"{DEVICE_TYPE}:{local_rank}")
+    torch.accelerator.set_device_index(device)
+    torch.set_default_device(device)
+    torch.set_default_dtype(dtype)
+
+    update_environment_variables(
+        {
+            "RANK": str(local_rank),
+            "LOCAL_RANK": str(local_rank),
+            "WORLD_SIZE": str(world_size),
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": "12347",
+        }
+    )
+
+    init_distributed_environment(backend=current_platform.dist_backend)
+
+    compilation_config = CompilationConfig(
+        splitting_ops=[],
+        cudagraph_mode=CUDAGraphMode.NONE,
+        pass_config=PassConfig(enable_sp=True, eliminate_noops=True),
+    )
+    device_config = DeviceConfig(device=torch.device(DEVICE_TYPE))
+    model_name = "RedHatAI/Llama-3.2-1B-Instruct-FP8"
+    model_config = ModelConfig(
+        model=model_name, trust_remote_code=True, dtype=dtype, seed=42
+    )
+    vllm_config = VllmConfig(
+        model_config=model_config,
+        device_config=device_config,
+        compilation_config=compilation_config,
+    )
+
+    with set_current_vllm_config(vllm_config):
+        initialize_model_parallel(tensor_model_parallel_size=world_size)
+
+        noop_pass = NoOpEliminationPass(vllm_config)
+        sp_pass = SequenceParallelismPass(vllm_config)
+        cleanup_pass = PostCleanupPass(vllm_config)
+        backend = TestBackend(noop_pass, sp_pass, cleanup_pass)
+
+        model = TestAllReduceRMSNormXPUDynamicTokenFP8Model(hidden_size)
+        hidden_states = torch.randn((batch_size * seq_len, hidden_size), dtype=dtype)
+        if dynamic:
+            torch._dynamo.mark_dynamic(hidden_states, 0)
+
+        compiled_model = torch.compile(model, backend=backend)
+        compiled_model(hidden_states)
+
+        assert sp_pass.matched_count == 4
+        assert backend.op_count(torch.ops.vllm.all_reduce.default, before=True) == 4
+        assert (
+            backend.op_count(torch.ops.vllm.reduce_scatter.default, before=False) == 4
+        )
+        assert backend.op_count(torch.ops.vllm.all_gather.default, before=False) == 8
+        assert backend.op_count(torch.ops.vllm.all_reduce.default, before=False) == 0

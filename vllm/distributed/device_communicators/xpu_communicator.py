@@ -41,6 +41,42 @@ class XpuCommunicator(DeviceCommunicatorBase):
                 self.all2all_manager = AgRsAll2AllManager(self.cpu_group)
                 logger.info("Using AgRs manager on XPU device.")
 
+    # oneCCL does not support all PyTorch dtypes for collective ops.
+    # These dtypes must be upcast before being passed to oneCCL.
+    _XCCL_UNSUPPORTED_DTYPES = frozenset([torch.uint8, torch.int8, torch.bool])
+
+    def all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
+        original_dtype = input_.dtype
+        if original_dtype not in self._XCCL_UNSUPPORTED_DTYPES:
+            return super().all_gather(input_, dim)
+
+        # oneCCL does not support this dtype for collective ops.
+        # Reinterpret bytes as int32 (zero-copy via view) so oneCCL sees a
+        # supported dtype, then restore the original dtype and shape after
+        # the gather.  We flatten to 1-D first so the dim logic stays simple.
+        if dim < 0:
+            dim += input_.dim()
+        original_shape = input_.shape
+        out_shape = (
+            original_shape[:dim]
+            + (original_shape[dim] * self.world_size,)
+            + original_shape[dim + 1 :]
+        )
+
+        # contiguous() is a no-op when the tensor is already contiguous,
+        # otherwise it copies once.  view(int32) then reinterprets the bytes
+        # without an extra copy, saving at least one allocation compared to
+        # .to(int32) which always allocates a new tensor.
+        flat = input_.contiguous().view(-1)  # [numel]
+        if flat.numel() % 4 == 0:
+            flat_i32 = flat.view(torch.int32)  # [numel//4], reinterpret bytes
+            gathered_i32 = super().all_gather(flat_i32, dim=0)
+            return gathered_i32.view(original_dtype).reshape(out_shape)
+        else:
+            # Fallback for tensors whose byte count is not divisible by 4.
+            result = super().all_gather(flat.to(torch.int32), dim=0)
+            return result.to(original_dtype).reshape(out_shape)
+
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
         output = input_.clone()
         dist.all_reduce(output, group=self.device_group)

@@ -21,8 +21,10 @@ from vllm.distributed.parallel_state import (
 )
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
+    kFp8DynamicTokenSym,
     kFp8StaticTensorSym,
 )
+from vllm.platforms import current_platform
 
 from ..inductor_pass import enable_fake_mode
 from ..utility.noop_elimination import NoOpEliminationPass
@@ -72,29 +74,31 @@ def get_sequence_parallelism_threshold(
     """
     from vllm.platforms import current_platform
 
-    if not current_platform.is_cuda():
-        return None
+    if current_platform.is_xpu():
+        min_per_gpu_size_mb = 8.0
+    elif current_platform.is_cuda():
+        capability = current_platform.get_device_capability()
+        if capability is None:
+            return None
 
-    capability = current_platform.get_device_capability()
-    if capability is None:
-        return None
+        # Collapse Blackwell variants (sm100/sm103/...) into one policy bucket.
+        if current_platform.is_device_capability_family(100):
+            device_capability = 100
+        else:
+            device_capability = capability.to_int()
 
-    # Collapse Blackwell variants (sm100/sm103/...) into one policy bucket.
-    if current_platform.is_device_capability_family(100):
-        device_capability = 100
+        # Check if device has configured thresholds
+        _hidden = SP_MIN_HIDDEN_SIZE.get(device_capability)
+        _gpu_mb = SP_MIN_PER_GPU_SIZE_MB.get(device_capability)
+        if _hidden is None or _gpu_mb is None:
+            return None
+        min_per_gpu_size_mb = _gpu_mb
     else:
-        device_capability = capability.to_int()
-
-    # Check if device has configured thresholds
-    min_hidden_size = SP_MIN_HIDDEN_SIZE.get(device_capability)
-    min_per_gpu_size_mb = SP_MIN_PER_GPU_SIZE_MB.get(device_capability)
-
-    if min_hidden_size is None or min_per_gpu_size_mb is None:
         return None
 
     # Only apply sequence parallelism for models meeting the size threshold
-    if hidden_size < min_hidden_size:
-        return None
+    # if hidden_size < min_hidden_size:
+    #     return None
 
     MiB = 1024 * 1024
     min_size = min_per_gpu_size_mb * MiB * tp_size
@@ -123,7 +127,7 @@ class _SequenceParallelPatternHelper:
         self.epsilon = epsilon
         self.dtype = dtype
         self.device = device
-        self.tp_group = get_tp_group()
+        self.group_name = get_tp_group().unique_name
         self.tp_size = get_tensor_model_parallel_world_size()
         self.tp_rank = get_tensor_model_parallel_rank()
 
@@ -132,13 +136,21 @@ class _SequenceParallelPatternHelper:
 
     def _reduce_scatter(self, x: torch.Tensor) -> torch.Tensor:
         return torch.ops.vllm.reduce_scatter.default(
-            x, dim=0, world_size=self.tp_size, group_name=self.tp_group.unique_name
+            x, dim=0, world_size=self.tp_size, group_name=self.group_name
         )
 
     def _all_gather(self, x: torch.Tensor) -> torch.Tensor:
         return torch.ops.vllm.all_gather.default(
-            x, dim=0, world_size=self.tp_size, group_name=self.tp_group.unique_name
+            x, dim=0, world_size=self.tp_size, group_name=self.group_name
         )
+
+    def _all_gather_xpu_fp8(self, fp8: torch.Tensor) -> torch.Tensor:
+        # XCCL SYCL GPU only supports float16/bfloat16/float32; pack two fp8 bytes
+        # into one bfloat16 for the collective, then unpack after.
+        fp8_bf16 = torch.ops.aten.view.dtype(fp8, torch.bfloat16)
+        fp8_full_bf16 = self._all_gather(fp8_bf16)
+        return torch.ops.aten.view.dtype(fp8_full_bf16, fp8.dtype)
+
 
     def empty(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         return torch.empty(*args, dtype=self.dtype, device=self.device, **kwargs)
@@ -492,6 +504,107 @@ class MiddleAllReduceRMSNormStaticNVFP4Pattern(_SequenceParallelPatternHelper):
         )
 
 
+class FirstAllReduceRMSNormDynamicFP8Pattern(_SequenceParallelPatternHelper):
+    def __init__(
+        self,
+        epsilon: float,
+        dtype: torch.dtype,
+        device: str | None,
+    ) -> None:
+        super().__init__(epsilon, dtype, device)
+        self.quant_matcher = MatcherQuantFP8(kFp8DynamicTokenSym)
+
+    def get_inputs(self) -> list[torch.Tensor]:
+        # input, weight
+        return [self.empty([4, 16]), self.empty([16])]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(input)
+            rms = vllm.ir.ops.rms_norm(all_reduce, weight, self.epsilon)
+            quant, scale = self.quant_matcher(rms)
+            return quant, scale, all_reduce
+
+        def replacement(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            logger.info(
+                "FirstAllReduceRMSNormDynamicFP8 matched: input%s weight%s",
+                list(input.shape),
+                list(weight.shape),
+            )
+            reduce_scatter = self._reduce_scatter(input)
+            rms = vllm.ir.ops.rms_norm(reduce_scatter, weight, self.epsilon)
+            quant, scale = self.quant_matcher(rms)
+            all_gather_quant = self._all_gather(quant)
+            all_gather_scale = self._all_gather(scale)
+            return all_gather_quant, all_gather_scale, reduce_scatter
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
+class MiddleAllReduceRMSNormDynamicFP8Pattern(_SequenceParallelPatternHelper):
+    def __init__(self, epsilon: float, dtype: torch.dtype, device: str | None) -> None:
+        super().__init__(epsilon, dtype, device)
+        self.quant_matcher = MatcherQuantFP8(kFp8DynamicTokenSym)
+
+    def get_inputs(self) -> list[torch.Tensor]:
+        mm_1 = torch.empty([4, 16], device=self.device, dtype=self.dtype)
+        residual = torch.empty([4, 16], device=self.device, dtype=self.dtype)
+        rms_norm_weights = torch.empty([16], device=self.device, dtype=self.dtype)
+        return [residual, mm_1, rms_norm_weights]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(mm_1)
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                all_reduce, residual, rms_norm_weights, self.epsilon
+            )
+            quant, scale = self.quant_matcher(rms)
+            return quant, scale, residual_out
+
+        def replacement(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            logger.info(
+                "MiddleAllReduceRMSNormDynamicFP8 matched: mm_1%s residual%s",
+                list(mm_1.shape),
+                list(residual.shape),
+            )
+            # pattern matcher replaces from top-to-bottom,
+            # so residual is still the full size here.
+            # add a temporary slice which will become a noop
+            # once the seqpar pattern with the previous rmsnorm is replaced
+            reduce_scatter = self._reduce_scatter(mm_1)
+            residual = residual[0 : reduce_scatter.size(0), ...]
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                reduce_scatter, residual, rms_norm_weights, self.epsilon
+            )
+            quant, scale = self.quant_matcher(rms)
+            all_gather_quant = self._all_gather(quant)
+            all_gather_scale = self._all_gather(scale)
+            # shape of residual changes but that's fine,
+            # next node is already slicing it, now becomes a noop
+            return all_gather_quant, all_gather_scale, residual_out
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
+
 class SequenceParallelismPass(VllmPatternMatcherPass):
     """
     This pass enables sequence parallelism for models.
@@ -567,6 +680,15 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
                 epsilon, self.model_dtype, self.device
             ).register(self.patterns)
 
+            # RMSNorm + Dynamic FP8 quantization patterns
+            FirstAllReduceRMSNormDynamicFP8Pattern(
+                epsilon, self.model_dtype, self.device
+            ).register(self.patterns)
+            MiddleAllReduceRMSNormDynamicFP8Pattern(
+                epsilon, self.model_dtype, self.device
+            ).register(self.patterns)
+
+
             if "SCALED_FP4_QUANT_OUT_OVERLOAD" in globals():
                 FirstAllReduceRMSNormStaticNVFP4Pattern(
                     epsilon, self.model_dtype, self.device
@@ -615,6 +737,5 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
     @VllmInductorPass.time_and_log
     def __call__(self, graph: fx.Graph) -> None:
         self.matched_count = self.patterns.apply(graph)
-        logger.debug("Replaced %s patterns", self.matched_count)
-        # Clean up reshape nodes
+        logger.info("Replaced %s patterns", self.matched_count)
         self.noop_cleanup(graph)
