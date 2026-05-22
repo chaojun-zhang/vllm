@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import functools
+import operator
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -143,14 +144,6 @@ class _SequenceParallelPatternHelper:
         return torch.ops.vllm.all_gather.default(
             x, dim=0, world_size=self.tp_size, group_name=self.group_name
         )
-
-    def _all_gather_xpu_fp8(self, fp8: torch.Tensor) -> torch.Tensor:
-        # XCCL SYCL GPU only supports float16/bfloat16/float32; pack two fp8 bytes
-        # into one bfloat16 for the collective, then unpack after.
-        fp8_bf16 = torch.ops.aten.view.dtype(fp8, torch.bfloat16)
-        fp8_full_bf16 = self._all_gather(fp8_bf16)
-        return torch.ops.aten.view.dtype(fp8_full_bf16, fp8.dtype)
-
 
     def empty(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         return torch.empty(*args, dtype=self.dtype, device=self.device, **kwargs)
@@ -604,6 +597,100 @@ class MiddleAllReduceRMSNormDynamicFP8Pattern(_SequenceParallelPatternHelper):
         )
 
 
+class FirstAllReduceRMSNormXPUStaticMxFP8Pattern(_SequenceParallelPatternHelper):
+    def get_inputs(self) -> list[torch.Tensor]:
+        # 2D input: last dim must be divisible by MXFP8_BLOCK_SIZE=32
+        return [self.empty([4, 32]), self.empty([32])]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(input)
+            rms = vllm.ir.ops.rms_norm(all_reduce, weight, self.epsilon)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
+            return fp8, scale, all_reduce
+
+        def replacement(
+            input: torch.Tensor,
+            weight: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            logger.info(
+                "FirstAllReduceRMSNormXPUStaticMxFP8 matched: input%s weight%s",
+                list(input.shape),
+                list(weight.shape),
+            )
+            reduce_scatter = self._reduce_scatter(input)
+            rms = vllm.ir.ops.rms_norm(reduce_scatter, weight, self.epsilon)
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
+            all_gather_fp8 = self._all_gather(fp8)
+            all_gather_scale = self._all_gather(scale)
+            return all_gather_fp8, all_gather_scale, reduce_scatter
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
+
+class MiddleAllReduceRMSNormXPUStaticMxFP8Pattern(_SequenceParallelPatternHelper):
+    def get_inputs(self) -> list[torch.Tensor]:
+        mm_1 = torch.empty([4, 32], device=self.device, dtype=self.dtype)
+        residual = torch.empty([4, 32], device=self.device, dtype=self.dtype)
+        rms_norm_weights = torch.empty([32], device=self.device, dtype=self.dtype)
+        return [residual, mm_1, rms_norm_weights]
+
+    def register(self, pm_pass: PatternMatcherPass) -> None:
+        def pattern(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            all_reduce = self._all_reduce(mm_1)
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                all_reduce, residual, rms_norm_weights, self.epsilon
+            )
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
+            return fp8, scale, residual_out
+
+        def replacement(
+            residual: torch.Tensor,
+            mm_1: torch.Tensor,
+            rms_norm_weights: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            logger.info(
+                "MiddleAllReduceRMSNormXPUStaticMxFP8 matched: mm_1%s residual%s",
+                list(mm_1.shape),
+                list(residual.shape),
+            )
+            # detailed explanation of the temporary slice below:
+            # it is correct when first inserted, becomes semantically
+            # incorrect after the preceding layer is replaced, and is
+            # removed by NoOpEliminationPass before the graph is compiled.
+            reduce_scatter = self._reduce_scatter(mm_1)
+            local_len = reduce_scatter.size(0)
+            # when the preceding VocabParallelEmbedding is excluded
+            # from the FX graph (e.g., passing `inputs_embeds` directly in VLMs),
+            # the FirstAllReduceRMSNorm pattern is never matched. we must
+            # perform a proper TP-aware slice here. simply using `[0:local_len]`
+            # would incorrectly cause all ranks to process rank 0's chunk.
+            residual = residual[
+                self.tp_rank * local_len : self.tp_rank * local_len + local_len, ...
+            ]
+            rms, residual_out = vllm.ir.ops.fused_add_rms_norm(
+                reduce_scatter, residual, rms_norm_weights, self.epsilon
+            )
+            fp8, scale = torch.ops.vllm.xpu_mxfp8_quantize(rms)
+            all_gather_fp8 = self._all_gather(fp8)
+            all_gather_scale = self._all_gather(scale)
+            # shape of residual changes but that's fine,
+            # next node is already slicing it, now becomes a noop
+            return all_gather_fp8, all_gather_scale, residual_out
+
+        pm.register_replacement(
+            pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
+        )
+
 
 class SequenceParallelismPass(VllmPatternMatcherPass):
     """
@@ -688,6 +775,13 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
                 epsilon, self.model_dtype, self.device
             ).register(self.patterns)
 
+            # RMSNorm + XPU Static MX FP8 quantization patterns
+            FirstAllReduceRMSNormXPUStaticMxFP8Pattern(
+                epsilon, self.model_dtype, self.device
+            ).register(self.patterns)
+            MiddleAllReduceRMSNormXPUStaticMxFP8Pattern(
+                epsilon, self.model_dtype, self.device
+            ).register(self.patterns)
 
             if "SCALED_FP4_QUANT_OUT_OVERLOAD" in globals():
                 FirstAllReduceRMSNormStaticNVFP4Pattern(
@@ -736,6 +830,35 @@ class SequenceParallelismPass(VllmPatternMatcherPass):
 
     @VllmInductorPass.time_and_log
     def __call__(self, graph: fx.Graph) -> None:
-        self.matched_count = self.patterns.apply(graph)
+        if current_platform.is_xpu() and hasattr(torch.ops.vllm, "xpu_mxfp8_quantize"):
+            # On XPU, the getitem nodes that extract fp8/e8m0fnu tensors from
+            # xpu_mxfp8_quantize are skipped by fallback_node_due_to_unsupported_type
+            # because their output dtypes (float8_e4m3fn / float8_e8m0fnu) are not
+            # in the supported float dtype allowlist. These getitems are the pattern
+            # anchors for XPUStaticMxFP8 SP patterns, so we must temporarily allow
+            # them to avoid the base RMSNorm pattern matching instead.
+            import torch._inductor.pattern_matcher as pm_module
+
+            _mxfp8_quant_target = torch.ops.vllm.xpu_mxfp8_quantize.default
+            _original_fallback = pm_module.fallback_node_due_to_unsupported_type
+
+            def _patched_fallback(node: fx.Node, allow_cpu_inputs: bool = True) -> bool:
+                if (
+                    node.op == "call_function"
+                    and node.target is operator.getitem
+                    and isinstance(node.args[0], fx.Node)
+                    and node.args[0].op == "call_function"
+                    and node.args[0].target is _mxfp8_quant_target
+                ):
+                    return False
+                return _original_fallback(node, allow_cpu_inputs)
+
+            pm_module.fallback_node_due_to_unsupported_type = _patched_fallback
+            try:
+                self.matched_count = self.patterns.apply(graph)
+            finally:
+                pm_module.fallback_node_due_to_unsupported_type = _original_fallback
+        else:
+            self.matched_count = self.patterns.apply(graph)
         logger.info("Replaced %s patterns", self.matched_count)
         self.noop_cleanup(graph)
