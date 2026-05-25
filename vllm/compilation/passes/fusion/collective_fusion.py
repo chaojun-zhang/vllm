@@ -338,18 +338,7 @@ def _xpu_fp8_mm_out(
     scale_b: torch.Tensor,
     out: torch.Tensor,
     bias: torch.Tensor | None = None,
-    dynamic: bool = False,
 ) -> None:
-    if dynamic:
-        # oneDNN requires all buffer pointers to be 64-byte aligned. When called
-        # from _pipelined_multi_all_gather_and_consume, A, scale_a and out are
-        # non-owning slices of a larger tensor, so rank>0 shards can be misaligned.
-        # Clone misaligned inputs to obtain fresh aligned allocations.
-        _ONEDNN_ALIGN = 64
-        if A.data_ptr() % _ONEDNN_ALIGN != 0:
-            A = A.clone()
-        if scale_a is not None and scale_a.data_ptr() % _ONEDNN_ALIGN != 0:
-            scale_a = scale_a.clone()
     torch.ops._xpu_C.fp8_gemm_out(out, A, B, scale_a, scale_b, bias)
 
 
@@ -409,7 +398,6 @@ def fused_all_gather_xpu_fp8_matmul_fake(
     gather_dim: int,
     group_name: str,
     out_dtype: torch.dtype | None = None,
-    dynamic: bool = False,
 ) -> torch.Tensor:
     world_size = c10d._resolve_process_group(group_name).size()
     output_shape = list(A_shard.shape)
@@ -428,7 +416,6 @@ def fused_all_gather_xpu_fp8_matmul(
     gather_dim: int,
     group_name: str,
     out_dtype: torch.dtype | None = None,
-    dynamic: bool = False,
 ) -> torch.Tensor:
     # MXFP8 block-wise scale (e8m0fnu): _fused_all_gather_matmul_impl only
     # supports per-token scales (last dim == 1 after gathering).  Use pipelined
@@ -466,7 +453,6 @@ def fused_all_gather_xpu_fp8_matmul(
                 scale_b=B_scale,
                 out=output_shards[rank],
                 bias=None,
-                dynamic=True,
             )
 
         torch.distributed._symmetric_memory._pipelined_multi_all_gather_and_consume(
@@ -487,7 +473,6 @@ def fused_all_gather_xpu_fp8_matmul(
             {
                 "scale_b": B_scale,
                 "bias": None,
-                "dynamic": dynamic,
             }
         ],
         out_dtypes=[out_dtype],
@@ -1022,7 +1007,6 @@ class AllGatherXPUDynamicFP8GEMMPattern(BasePattern):
                 0,
                 self.tp.device_group.group_name,
                 self.dtype,
-                True,
             )
 
         pm.register_replacement(

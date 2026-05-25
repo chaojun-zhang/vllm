@@ -155,3 +155,69 @@ def test_async_tp_pass_nvfp4_correctness(num_gpus_available: int, monkeypatch):
     ]
 
     compare_two_settings(NVFP4_MODEL_ID, async_tp_args, tp_args, method="generate")
+
+
+@create_new_process_for_each_test()
+@pytest.mark.skipif(
+    not current_platform.is_xpu(),
+    reason="XPU-only: tests XPU FP8 SP + async TP combined path",
+)
+def test_async_tp_xpu_fp8_sp_correctness(num_gpus_available: int):
+    """Test XPU static FP8 with both sequence parallel and async TP enabled.
+
+    Exercises the SP + AsyncTP combined path which activates both:
+      - XPU FP8 SP patterns (FirstAllReduceRMSNorm*FP8Pattern, etc.)
+      - XPU FP8 async TP patterns (XPUFp8GEMMReduceScatterPattern,
+        AllGatherXPUFp8GEMMPattern)
+    """
+    model_id = "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8"
+    tp_size = 2
+    if num_gpus_available < tp_size:
+        pytest.skip(f"Need at least {tp_size} GPUs")
+
+    model_info = HF_EXAMPLE_MODELS.find_hf_info(model_id)
+    model_info.check_transformers_version(on_fail="skip")
+    model_info.check_available_online(on_fail="skip")
+
+    common_args = [
+        "--dtype",
+        "bfloat16",
+        "--max-model-len",
+        "2048",
+        "--max-num-seqs",
+        "8",
+    ]
+
+    compilation_config = {
+        "mode": CompilationMode.VLLM_COMPILE,
+        "compile_sizes": [2, 4, 8],
+        "splitting_ops": [],
+        "pass_config": {
+            "fuse_gemm_comms": True,
+            "enable_sp": True,
+            "fuse_norm_quant": True,
+            "fuse_act_quant": True,
+            "fuse_allreduce_rms": False,
+            "sp_min_token_num": 0,
+        },
+    }
+
+    sp_async_tp_args = [
+        *common_args,
+        "--tensor-parallel-size",
+        str(tp_size),
+        "--distributed-executor-backend",
+        "mp",
+        "--compilation_config",
+        json.dumps(compilation_config),
+    ]
+
+    tp_args = [
+        *common_args,
+        "--tensor-parallel-size",
+        str(tp_size),
+        "--distributed-executor-backend",
+        "mp",
+    ]
+
+    compare_two_settings(model_id, sp_async_tp_args, tp_args, method="generate")

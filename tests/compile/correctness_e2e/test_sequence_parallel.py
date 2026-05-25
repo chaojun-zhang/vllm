@@ -408,6 +408,40 @@ def test_tp_sp_generation_prompt_embeds(
 
 
 @create_new_process_for_each_test()
+@pytest.mark.skipif(
+    not current_platform.is_xpu(),
+    reason="XPU-only: tests XPU FP8 SP patterns with async TP enabled",
+)
+def test_tp_sp_xpu_fp8_with_async_tp(num_gpus_available: int):
+    """Test XPU static FP8 sequence parallel with async TP enabled.
+
+    Exercises XPU-specific FP8 SP patterns (FirstAllReduceRMSNorm*FP8Pattern)
+    combined with async TP (fuse_gemm_comms=True), which also activates the
+    XPU FP8 async TP collective fusion patterns.
+    """
+    _compare_sp(
+        "RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8",
+        ParallelSetup(
+            tp_size=2,
+            pp_size=1,
+            fuse_norm_quant=True,
+            fuse_act_quant=True,
+            eager_mode=True,
+            chunked_prefill=False,
+        ),
+        "mp",
+        "auto",
+        SPTestOptions(multi_node_only=False),
+        num_gpus_available,
+        use_inductor_graph_partition=False,
+        fuse_gemm_comms=True,
+        enable_prompt_embeds=False,
+        method="generate",
+        is_multimodal=False,
+    )
+
+
+@create_new_process_for_each_test()
 def test_tp_sp_nvfp4_generation(num_gpus_available: int):
     if (
         not current_platform.is_cuda()

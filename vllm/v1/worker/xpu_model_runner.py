@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import torch
 
 from vllm.config import VllmConfig
+from vllm.utils.math_utils import round_up
 from vllm.utils.torch_utils import supports_xpu_graph
 from vllm.v1.worker.gpu.model_runner import (
     GPUModelRunner as GPUModelRunnerV2,
@@ -24,6 +25,15 @@ class XPUModelRunner(GPUModelRunner):
             super().__init__(vllm_config, device)
         # FIXME: To be verified.
         self.cascade_attn_enabled = False
+
+    def _pad_for_sequence_parallelism(self, num_scheduled_tokens: int) -> int:
+        # oneDNN fp8_gemm requires 64-byte aligned buffer pointers.
+        # Per-token scale shards (float32, 4 B) have offset rank*(M//WS)*4 B;
+        # alignment needs M//WS % 16 == 0, i.e. M % (16*WS) == 0.
+        tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+        if self.compilation_config.pass_config.enable_sp and tp_size > 1:
+            return round_up(num_scheduled_tokens, 16 * tp_size)
+        return num_scheduled_tokens
 
 
 class XPUModelRunnerV2(GPUModelRunnerV2):
