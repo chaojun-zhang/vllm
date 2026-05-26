@@ -29,16 +29,18 @@ class XPUMxFp8LinearKernel(Mxfp8LinearKernel):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         weight_scale = layer.weight_scale.view(torch.float8_e8m0fnu)
-        # Keep weight_scale in [N, K/32] format (not transposed).
-        # The oneDNN fp8_gemm kernel expects weight_scale with shape [N, K/32],
-        # matching activation_scale shape [M, K/32] on the K/32 dimension.
+        # Transpose weight_scale from checkpoint [N, K/32] → [K/32, N].
+        # oneDNN MXFP8 matmul with weight [K, N] expects scale layout [K/32, N]:
+        # each row of the scale tensor corresponds to one K-group of 32 elements,
+        # and each column corresponds to an output neuron N.
+        weight_scale = weight_scale.t().contiguous()
         # Store weight as C-contiguous [K, N] so its data_ptr is GPU-allocator
         # aligned (64-byte).  Without .contiguous() the stored tensor is a
         # Fortran-order view sharing the checkpoint's potentially-misaligned
         # storage; that triggers oneDNN alignment checks during inference.
         # This one-time copy at load time avoids any copy at inference time.
         replace_parameter(layer, "weight", layer.weight.t().contiguous())
-        replace_parameter(layer, "weight_scale", weight_scale.contiguous())
+        replace_parameter(layer, "weight_scale", weight_scale)
 
     def apply_weights(
         self,
