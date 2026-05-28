@@ -1330,9 +1330,29 @@ class SpecDecodeBaseProposer:
                 )
 
             if share_embeddings:
-                if hasattr(self.model.model, "embed_tokens"):
-                    del self.model.model.embed_tokens
-                self.model.model.embed_tokens = target_embed_tokens
+                # Guard against cross-arch Eagle3 where the target model's
+                # embedding dimension differs from the draft model's hidden
+                # size (e.g. MiniMax-M2 hidden=3072 vs EAGLE3-LLaMA3.1
+                # hidden=4096). Sharing would cause a shape mismatch in the
+                # first Eagle3 decoder layer which concatenates embeds and
+                # hidden_states along dim=-1.
+                target_embed_dim = target_embed_tokens.weight.shape[-1]
+                draft_embed_dim = (
+                    self.model.model.embed_tokens.weight.shape[-1]
+                    if hasattr(self.model.model, "embed_tokens")
+                    else target_embed_dim
+                )
+                if target_embed_dim != draft_embed_dim:
+                    logger.warning(
+                        "Skipping embed_tokens sharing: target embed dim %d "
+                        "!= draft embed dim %d.",
+                        target_embed_dim,
+                        draft_embed_dim,
+                    )
+                else:
+                    if hasattr(self.model.model, "embed_tokens"):
+                        del self.model.model.embed_tokens
+                    self.model.model.embed_tokens = target_embed_tokens
         else:
             logger.info(
                 "The draft model's vocab embedding will be loaded separately"
