@@ -195,7 +195,22 @@ class XPUFp8BlockScaledMMKernel(Fp8BlockScaledMMLinearKernel):
     ) -> tuple[bool, str | None]:
         if not current_platform.is_xpu():
             return False, "XPUFp8BlockScaledMM only support on XPU"
+        if not hasattr(torch.ops, "_xpu_C") or not hasattr(
+            torch.ops._xpu_C, "fp8_gemm"
+        ):
+            return False, "XPUFp8BlockScaledMM requires torch.ops._xpu_C.fp8_gemm"
         return True, None
+
+    @classmethod
+    def can_implement(
+        cls, config: FP8ScaledMMLinearLayerConfig
+    ) -> tuple[bool, str | None]:
+        # fp8_gemm only supports 1-D scales (per-tensor / per-token / per-channel).
+        # Block-scaled (per-group) 2-D scale tensors are not yet supported by the
+        # oneDNN primitive; use TritonFp8BlockScaledMMKernel as fallback instead.
+        # TODO: re-enable once a dedicated fp8_block_gemm op lands in
+        # vllm-xpu-kernels.
+        return False, "fp8_gemm does not yet support 2-D block scales on XPU"
 
     def process_weights_after_loading(self, layer: torch.nn.Module):
         super().process_weights_after_loading(layer)
