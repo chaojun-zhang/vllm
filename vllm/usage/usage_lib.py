@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import datetime
 import json
 import logging
@@ -7,7 +10,7 @@ import time
 from enum import Enum
 from pathlib import Path
 from threading import Thread
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import cpuinfo
@@ -15,20 +18,42 @@ import psutil
 import requests
 import torch
 
-_config_home = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-_USAGE_STATS_JSON_PATH = os.path.join(_config_home, "vllm/usage_stats.json")
-_USAGE_STATS_DO_NOT_TRACK_PATH = os.path.join(_config_home,
-                                              "vllm/do_not_track")
+import vllm.envs as envs
+from vllm.connections import global_http_connection
+from vllm.logger import init_logger
+from vllm.utils.platform_utils import cuda_get_device_properties
+from vllm.version import __version__ as VLLM_VERSION
+
+logger = init_logger(__name__)
+
+_config_home = envs.VLLM_CONFIG_ROOT
+_USAGE_STATS_JSON_PATH = os.path.join(_config_home, "usage_stats.json")
+_USAGE_STATS_DO_NOT_TRACK_PATH = os.path.join(_config_home, "do_not_track")
 _USAGE_STATS_ENABLED = None
-_USAGE_STATS_SERVER = os.environ.get("VLLM_USAGE_STATS_SERVER",
-                                     "https://stats.vllm.ai")
+_USAGE_STATS_SERVER = envs.VLLM_USAGE_STATS_SERVER
+
+_GLOBAL_RUNTIME_DATA = dict[str, str | int | bool]()
+
+_USAGE_ENV_VARS_TO_COLLECT = [
+    "VLLM_USE_MODELSCOPE",
+    "VLLM_USE_FLASHINFER_SAMPLER",
+    "VLLM_PP_LAYER_PARTITION",
+    "VLLM_USE_TRITON_AWQ",
+    "VLLM_ENABLE_V1_MULTIPROCESSING",
+]
+
+
+def set_runtime_usage_data(key: str, value: str | int | bool) -> None:
+    """Set global usage data that will be sent with every usage heartbeat."""
+    _GLOBAL_RUNTIME_DATA[key] = value
 
 
 def is_usage_stats_enabled():
     """Determine whether or not we can send usage stats to the server.
     The logic is as follows:
     - By default, it should be enabled.
-    - Two environment variables can disable it:
+    - Three environment variables can disable it:
+        - VLLM_DO_NOT_TRACK=1
         - DO_NOT_TRACK=1
         - VLLM_NO_USAGE_STATS=1
     - A file in the home directory can disable it if it exists:
@@ -36,12 +61,11 @@ def is_usage_stats_enabled():
     """
     global _USAGE_STATS_ENABLED
     if _USAGE_STATS_ENABLED is None:
-        do_not_track = os.environ.get("DO_NOT_TRACK", "0") == "1"
-        no_usage_stats = os.environ.get("VLLM_NO_USAGE_STATS", "0") == "1"
+        do_not_track = envs.VLLM_DO_NOT_TRACK
+        no_usage_stats = envs.VLLM_NO_USAGE_STATS
         do_not_track_file = os.path.exists(_USAGE_STATS_DO_NOT_TRACK_PATH)
 
-        _USAGE_STATS_ENABLED = not (do_not_track or no_usage_stats
-                                    or do_not_track_file)
+        _USAGE_STATS_ENABLED = not (do_not_track or no_usage_stats or do_not_track_file)
     return _USAGE_STATS_ENABLED
 
 
@@ -52,9 +76,11 @@ def _get_current_timestamp_ns() -> int:
 def _detect_cloud_provider() -> str:
     # Try detecting through vendor file
     vendor_files = [
-        "/sys/class/dmi/id/product_version", "/sys/class/dmi/id/bios_vendor",
+        "/sys/class/dmi/id/product_version",
+        "/sys/class/dmi/id/bios_vendor",
         "/sys/class/dmi/id/product_name",
-        "/sys/class/dmi/id/chassis_asset_tag", "/sys/class/dmi/id/sys_vendor"
+        "/sys/class/dmi/id/chassis_asset_tag",
+        "/sys/class/dmi/id/sys_vendor",
     ]
     # Mapping of identifiable strings to cloud providers
     cloud_identifiers = {
@@ -88,6 +114,7 @@ class UsageContext(str, Enum):
     LLM_CLASS = "LLM_CLASS"
     API_SERVER = "API_SERVER"
     OPENAI_API_SERVER = "OPENAI_API_SERVER"
+    OPENAI_BATCH_RUNNER = "OPENAI_BATCH_RUNNER"
     ENGINE_CONTEXT = "ENGINE_CONTEXT"
 
 
@@ -101,50 +128,87 @@ class UsageMessage:
         self.uuid = str(uuid4())
 
         # Environment Information
-        self.provider: Optional[str] = None
-        self.num_cpu: Optional[int] = None
-        self.cpu_type: Optional[str] = None
-        self.cpu_family_model_stepping: Optional[str] = None
-        self.total_memory: Optional[int] = None
-        self.architecture: Optional[str] = None
-        self.platform: Optional[str] = None
-        self.gpu_count: Optional[int] = None
-        self.gpu_type: Optional[str] = None
-        self.gpu_memory_per_device: Optional[int] = None
+        self.provider: str | None = None
+        self.num_cpu: int | None = None
+        self.cpu_type: str | None = None
+        self.cpu_family_model_stepping: str | None = None
+        self.total_memory: int | None = None
+        self.architecture: str | None = None
+        self.platform: str | None = None
+        self.xpu_runtime: str | None = None
+        self.cuda_runtime: str | None = None
+        self.gpu_count: int | None = None
+        self.gpu_type: str | None = None
+        self.gpu_memory_per_device: int | None = None
+        self.env_var_json: str | None = None
 
         # vLLM Information
-        self.model_architecture: Optional[str] = None
-        self.vllm_version: Optional[str] = None
-        self.context: Optional[str] = None
+        self.model_architecture: str | None = None
+        self.vllm_version: str | None = None
+        self.context: str | None = None
 
         # Metadata
-        self.log_time: Optional[int] = None
-        self.source: Optional[str] = None
+        self.log_time: int | None = None
+        self.source: str | None = None
 
-    def report_usage(self,
-                     model_architecture: str,
-                     usage_context: UsageContext,
-                     extra_kvs: Optional[Dict[str, Any]] = None) -> None:
-        t = Thread(target=self._report_usage_worker,
-                   args=(model_architecture, usage_context, extra_kvs or {}),
-                   daemon=True)
+    def report_usage(
+        self,
+        model_architecture: str,
+        usage_context: UsageContext,
+        extra_kvs: dict[str, Any] | None = None,
+    ) -> None:
+        t = Thread(
+            target=self._report_usage_worker,
+            args=(model_architecture, usage_context, extra_kvs or {}),
+            daemon=True,
+        )
         t.start()
 
-    def _report_usage_worker(self, model_architecture: str,
-                             usage_context: UsageContext,
-                             extra_kvs: Dict[str, Any]) -> None:
+    def _report_usage_worker(
+        self,
+        model_architecture: str,
+        usage_context: UsageContext,
+        extra_kvs: dict[str, Any],
+    ) -> None:
         self._report_usage_once(model_architecture, usage_context, extra_kvs)
-        self._report_continous_usage()
+        self._report_continuous_usage()
 
-    def _report_usage_once(self, model_architecture: str,
-                           usage_context: UsageContext,
-                           extra_kvs: Dict[str, Any]) -> None:
+    def _report_tpu_inference_usage(self) -> bool:
+        try:
+            from tpu_inference import tpu_info, utils
+
+            self.gpu_count = tpu_info.get_num_chips()
+            self.gpu_type = tpu_info.get_tpu_type()
+            self.gpu_memory_per_device = utils.get_device_hbm_limit()
+            self.cuda_runtime = "tpu_inference"
+            return True
+        except Exception:
+            return False
+
+    def _report_usage_once(
+        self,
+        model_architecture: str,
+        usage_context: UsageContext,
+        extra_kvs: dict[str, Any],
+    ) -> None:
         # Platform information
-        if torch.cuda.is_available():
-            device_property = torch.cuda.get_device_properties(0)
-            self.gpu_count = torch.cuda.device_count()
-            self.gpu_type = device_property.name
-            self.gpu_memory_per_device = device_property.total_memory
+        from vllm.platforms import current_platform
+
+        if current_platform.is_cuda_alike():
+            self.gpu_count = current_platform.device_count()
+            self.gpu_type, self.gpu_memory_per_device = cuda_get_device_properties(
+                0, ("name", "total_memory")
+            )
+        if current_platform.is_cuda():
+            self.cuda_runtime = torch.version.cuda
+        if current_platform.is_xpu():
+            self.xpu_runtime = torch.version.xpu
+            self.gpu_count = torch.xpu.device_count()
+            self.gpu_type = torch.xpu.get_device_name(0)
+            self.gpu_memory_per_device = torch.xpu.get_device_properties(0).total_memory
+        if current_platform.is_tpu():  # noqa: SIM102
+            if not self._report_tpu_inference_usage():
+                logger.exception("Failed to collect TPU information")
         self.provider = _detect_cloud_provider()
         self.architecture = platform.machine()
         self.platform = platform.platform()
@@ -153,21 +217,27 @@ class UsageMessage:
         info = cpuinfo.get_cpu_info()
         self.num_cpu = info.get("count", None)
         self.cpu_type = info.get("brand_raw", "")
-        self.cpu_family_model_stepping = ",".join([
-            str(info.get("family", "")),
-            str(info.get("model", "")),
-            str(info.get("stepping", ""))
-        ])
+        self.cpu_family_model_stepping = ",".join(
+            [
+                str(info.get("family", "")),
+                str(info.get("model", "")),
+                str(info.get("stepping", "")),
+            ]
+        )
 
         # vLLM information
-        import vllm  # delayed import to prevent circular import
         self.context = usage_context.value
-        self.vllm_version = vllm.__version__
+        self.vllm_version = VLLM_VERSION
         self.model_architecture = model_architecture
+
+        # Environment variables
+        self.env_var_json = json.dumps(
+            {env_var: getattr(envs, env_var) for env_var in _USAGE_ENV_VARS_TO_COLLECT}
+        )
 
         # Metadata
         self.log_time = _get_current_timestamp_ns()
-        self.source = os.environ.get("VLLM_USAGE_SOURCE", "production")
+        self.source = envs.VLLM_USAGE_SOURCE
 
         data = vars(self)
         if extra_kvs:
@@ -176,7 +246,7 @@ class UsageMessage:
         self._write_to_file(data)
         self._send_to_server(data)
 
-    def _report_continous_usage(self):
+    def _report_continuous_usage(self):
         """Report usage every 10 minutes.
 
         This helps us to collect more data points for uptime of vLLM usages.
@@ -184,19 +254,24 @@ class UsageMessage:
         """
         while True:
             time.sleep(600)
-            data = {"uuid": self.uuid, "log_time": _get_current_timestamp_ns()}
+            data = {
+                "uuid": self.uuid,
+                "log_time": _get_current_timestamp_ns(),
+            }
+            data.update(_GLOBAL_RUNTIME_DATA)
 
             self._write_to_file(data)
             self._send_to_server(data)
 
-    def _send_to_server(self, data):
+    def _send_to_server(self, data: dict[str, Any]) -> None:
         try:
-            requests.post(_USAGE_STATS_SERVER, json=data)
+            global_http_client = global_http_connection.get_sync_client()
+            global_http_client.post(_USAGE_STATS_SERVER, json=data)
         except requests.exceptions.RequestException:
             # silently ignore unless we are using debug log
             logging.debug("Failed to send usage data to server")
 
-    def _write_to_file(self, data):
+    def _write_to_file(self, data: dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(_USAGE_STATS_JSON_PATH), exist_ok=True)
         Path(_USAGE_STATS_JSON_PATH).touch(exist_ok=True)
         with open(_USAGE_STATS_JSON_PATH, "a") as f:
