@@ -513,35 +513,123 @@ def configure_subprocess(
 ):
     """Temporarily replace the multiprocessing executable with a numactl wrapper."""
     parallel_config = vllm_config.parallel_config
-    if not parallel_config.numa_bind:
+    with _device_context(parallel_config):
+        if not parallel_config.numa_bind:
+            yield
+            return
+
+        if process_kind == "EngineCore":
+            numactl_args = _get_numactl_enginecore_args(
+                parallel_config, local_rank, dp_local_rank
+            )
+        elif process_kind == "worker":
+            numactl_args = _get_numactl_worker_args(
+                parallel_config, local_rank, dp_local_rank
+            )
+        else:
+            raise ValueError(
+                f"Unknown process_kind {process_kind!r}; expected 'worker' or 'EngineCore'."
+            )
+
+        executable, debug_str = _get_numactl_executable()
+        numactl_args = _resolve_numactl_args(numactl_args)
+        if not numactl_args:
+            # No NUMA binding possible here; launch without the wrapper.
+            yield
+            return
+        python_executable = os.fsdecode(multiprocessing.spawn.get_executable())
+        with (
+            _set_numa_wrapper_env(numactl_args, python_executable),
+            _mp_set_executable(executable, debug_str),
+        ):
+            yield
+
+
+@contextmanager
+def _device_context(
+    parallel_config,
+):
+    """On XPU, restrict ZE_AFFINITY_MASK for the worker subprocess to exactly
+    ``local_world_size`` devices.
+
+    When the test harness or parent process exposes more XPU devices than a
+    worker needs (e.g. ``ZE_AFFINITY_MASK=0,1,2,3`` with TP=1 or TP=2), the
+    subprocess inherits the full mask and XPU/Level Zero initialises all visible
+    devices.  This causes two classes of failure:
+
+    * **Single-device worker (TP=1)**: two processes (test subprocess + EngineCore
+      worker) both initialise xpu:0 under a multi-device context, leading to
+      ``UR_RESULT_ERROR_DEVICE_LOST`` or OOM-like failures during weight loading.
+    * **Multi-device worker (TP=2)**: XCCL/oneCCL sees 4 visible devices but is
+      configured for 2, confusing its topology-recognition pass and triggering a
+      hang in the warm-up ``all_reduce``.
+
+    The fix: temporarily narrow ZE_AFFINITY_MASK to the first ``local_world_size``
+    physical device IDs from the current mask before spawning the subprocess, then
+    restore the original value.  Workers still use their own ``local_rank`` as the
+    logical device index, which continues to map correctly because the visible
+    devices are now exactly ``[0 .. local_world_size-1]``.
+
+    This is a no-op when the mask already contains exactly ``local_world_size``
+    entries, so it does not affect correctly-configured multi-GPU setups.
+    """
+    from vllm.platforms import current_platform
+
+    if not current_platform.is_xpu():
         yield
         return
 
-    if process_kind == "EngineCore":
-        numactl_args = _get_numactl_enginecore_args(
-            parallel_config, local_rank, dp_local_rank
+    env_var = current_platform.device_control_env_var  # "ZE_AFFINITY_MASK"
+    old_val = os.environ.get(env_var)
+    needed = parallel_config.local_world_size
+
+    if needed <= 0:
+        logger.debug(
+            "Skip XPU affinity narrowing because local_world_size=%d", needed
         )
-    elif process_kind == "worker":
-        numactl_args = _get_numactl_worker_args(
-            parallel_config, local_rank, dp_local_rank
-        )
+        yield
+        return
+
+    # Build the list of visible physical device IDs from parent env.
+    # If no mask is preset, synthesize a default contiguous mapping.
+    if old_val is not None:
+        current_devices = [d.strip() for d in old_val.split(",") if d.strip()]
     else:
-        raise ValueError(
-            f"Unknown process_kind {process_kind!r}; expected 'worker' or 'EngineCore'."
-        )
+        current_devices = [
+            str(current_platform.device_id_to_physical_device_id(i))
+            for i in range(needed)
+        ]
 
-    executable, debug_str = _get_numactl_executable()
-    numactl_args = _resolve_numactl_args(numactl_args)
-    if not numactl_args:
-        # No NUMA binding possible here; launch without the wrapper.
+    if len(current_devices) <= needed:
+        # Already at/below required count: keep parent mask unchanged.
+        logger.debug(
+            "Keep %s unchanged: old=%s devices=%s needed=%d",
+            env_var,
+            old_val,
+            current_devices,
+            needed,
+        )
         yield
         return
-    python_executable = os.fsdecode(multiprocessing.spawn.get_executable())
-    with (
-        _set_numa_wrapper_env(numactl_args, python_executable),
-        _mp_set_executable(executable, debug_str),
-    ):
+
+    new_val = ",".join(current_devices[:needed])
+    logger.debug(
+        "Narrow %s for XPU subprocess: old=%s -> new=%s (needed=%d)",
+        env_var,
+        old_val,
+        new_val,
+        needed,
+    )
+    os.environ[env_var] = new_val
+    try:
         yield
+    finally:
+        if old_val is None:
+            os.environ.pop(env_var, None)
+            logger.debug("Restore %s: unset (was temporary %s)", env_var, new_val)
+        else:
+            os.environ[env_var] = old_val
+            logger.debug("Restore %s: %s", env_var, old_val)
 
 
 def _get_numactl_executable() -> tuple[str, str]:
