@@ -604,6 +604,13 @@ class RemoteVLLMServer:
                         mem_info = nvmlDeviceGetMemoryInfo(handle)
                         total_used += mem_info.used
                     return total_used
+            elif current_platform.is_xpu():
+                total_used = 0
+                device_count = current_platform.device_count()
+                for i in range(device_count):
+                    free, total = torch.xpu.mem_get_info(i)
+                    total_used += total - free
+                return total_used
         except Exception as e:
             print(f"[RemoteOpenAIServer] Could not query GPU memory: {e}")
             return None
@@ -1711,6 +1718,26 @@ def _format_subprocess_exit(returncode: int) -> str:
 _SPAWN_CHILD_ENV = "VLLM_TEST_SPAWN_CHILD"
 
 
+def _limit_gpu_env(env: dict[str, str], num_gpus: int) -> None:
+    """Restrict visible GPUs in subprocess env to at most *num_gpus* devices."""
+    if not current_platform.is_xpu():
+        return
+
+    if num_gpus < 1:
+        return
+
+    env_var = current_platform.device_control_env_var
+    value = env.get(env_var)
+    if value is not None:
+        devices = [d.strip() for d in value.split(",") if d.strip()]
+        if len(devices) > num_gpus:
+            env[env_var] = ",".join(devices[:num_gpus])
+    elif current_platform.device_count() > num_gpus:
+        # Env var not set but more devices visible than needed — restrict
+        # to the first num_gpus devices to avoid multi-device init hangs.
+        env[env_var] = ",".join(str(i) for i in range(num_gpus))
+
+
 def spawn_new_process_for_each_test(f: Callable[_P, None]) -> Callable[_P, None]:
     """Decorator to spawn a new process for each test function.
 
@@ -1777,6 +1804,10 @@ def spawn_new_process_for_each_test(f: Callable[_P, None]) -> Callable[_P, None]
             env = os.environ.copy()
             env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
             env[_SPAWN_CHILD_ENV] = "1"
+
+            num_gpus = getattr(f, "_vllm_num_gpus", None)
+            if num_gpus is not None:
+                _limit_gpu_env(env, num_gpus)
 
             result = subprocess.run(
                 [sys.executable, "-c", child_script],
@@ -1886,6 +1917,10 @@ def multi_gpu_marks(*, num_gpus: int):
     return [test_selector, test_skipif]
 
 
+def single_gpu_test():
+    return multi_gpu_test(num_gpus=1)
+
+
 def multi_gpu_test(*, num_gpus: int):
     """
     Decorate a test to be run only when multiple GPUs are available.
@@ -1893,6 +1928,7 @@ def multi_gpu_test(*, num_gpus: int):
     marks = multi_gpu_marks(num_gpus=num_gpus)
 
     def wrapper(f: Callable[_P, None]) -> Callable[_P, None]:
+        f._vllm_num_gpus = num_gpus  # type: ignore[attr-defined]
         func = create_new_process_for_each_test()(f)
         for mark in reversed(marks):
             func = mark(func)

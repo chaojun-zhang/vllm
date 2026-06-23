@@ -3,9 +3,10 @@
 
 import pytest
 
-from ..utils import compare_two_settings
+from ..utils import compare_two_settings, create_new_process_for_each_test
 
 
+@create_new_process_for_each_test()
 @pytest.mark.parametrize("disable_pin_memory", [False, True])
 @pytest.mark.parametrize("disable_uva", [False, True])
 def test_cpu_offload(disable_pin_memory, disable_uva):
