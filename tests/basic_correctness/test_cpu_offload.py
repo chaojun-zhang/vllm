@@ -3,10 +3,9 @@
 
 import pytest
 
-from ..utils import compare_two_settings, create_new_process_for_each_test
+from ..utils import compare_two_settings
 
 
-@create_new_process_for_each_test()
 @pytest.mark.parametrize("disable_pin_memory", [False, True])
 @pytest.mark.parametrize("disable_uva", [False, True])
 def test_cpu_offload(disable_pin_memory, disable_uva):
@@ -16,6 +15,11 @@ def test_cpu_offload(disable_pin_memory, disable_uva):
     }
 
     args = ["--cpu-offload-gb", "1"]
+    arg1 = []
+    arg1.append("--tensor-parallel-size")
+    arg1.append("2")
+    args.append("--tensor-parallel-size")
+    args.append("2")
 
     # cuda graph only works with UVA offloading
     if disable_uva:
@@ -23,7 +27,7 @@ def test_cpu_offload(disable_pin_memory, disable_uva):
 
     compare_two_settings(
         model="hmellor/tiny-random-LlamaForCausalLM",
-        arg1=[],
+        arg1=arg1,
         arg2=args,
         env1=None,
         env2=env_vars,

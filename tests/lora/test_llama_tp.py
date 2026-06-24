@@ -12,7 +12,7 @@ from vllm.lora.request import LoRARequest
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.platforms import current_platform
 
-from ..utils import VLLM_PATH, multi_gpu_test, single_gpu_test
+from ..utils import VLLM_PATH, create_new_process_for_each_test, multi_gpu_test
 
 PROMPT_TEMPLATE = """<|eot_id|><|start_header_id|>user<|end_header_id|>
 I want you to act as a SQL terminal in front of an example database, you need only to return the sql command to me.Below is an instruction that describes a task, Write a response that appropriately completes the request.
@@ -123,7 +123,7 @@ def generate_and_test(
     print("removing lora")
 
 
-@single_gpu_test()
+@create_new_process_for_each_test()
 @pytest.mark.parametrize("cudagraph_specialize_lora", [True, False])
 def test_llama_lora(llama32_lora_files, cudagraph_specialize_lora: bool):
     llm = vllm.LLM(

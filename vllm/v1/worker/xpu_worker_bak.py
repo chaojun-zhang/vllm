@@ -84,53 +84,14 @@ class XPUWorker(Worker):
         else:
             raise RuntimeError(f"Not support device type: {self.device_config.device}")
 
-        visible_device_count = torch.accelerator.device_count()
-        pc = parallel_config
-        logger.info(
-            "XPUWorker device init: "
-            "rank=%d, local_rank=%d, "
-            "dp_rank=%d, dp_rank_local=%s, dp_size=%d, "
-            "tp_size=%d, pp_size=%d, "
-            "tp_pp_world_size=%d, world_size=%d, local_world_size=%d, "
-            "visible_device_count=%d, device=%s",
-            self.rank,
-            self.local_rank,
-            pc.data_parallel_rank,
-            pc.data_parallel_rank_local,
-            pc.data_parallel_size,
-            pc.tensor_parallel_size,
-            pc.pipeline_parallel_size,
-            pc.pipeline_parallel_size * pc.tensor_parallel_size,
-            pc.world_size,
-            pc.local_world_size,
-            visible_device_count,
-            self.device,
-        )
-
         ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
         ENV_LOCAL_WORLD_SIZE = os.getenv(
-            "LOCAL_WORLD_SIZE", str(self.parallel_config.local_world_size)
+            "LOCAL_WORLD_SIZE", str(self.parallel_config.world_size)
         )
         os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
         os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
         os.environ["LOCAL_RANK"] = str(self.local_rank)
-        if self.parallel_config.tensor_parallel_size > 1:
-            # oneCCL local topology should come from explicit local rank/size
-            # instead of ATL fallback to reduce TP collective instability.
-            os.environ["CCL_LOCAL_SIZE"] = ENV_LOCAL_WORLD_SIZE
-            os.environ["CCL_LOCAL_RANK"] = str(self.local_rank)
-            # On some XPU topologies, oneCCL's automatic fabric check may infer
-            # PCIe and choose a suboptimal path for TP collectives.
-            os.environ.setdefault("CCL_TOPO_FABRIC_VERTEX_CONNECTION_CHECK", "0")
-
-        logger.info(
-            "rank=%d local_rank=%d: calling init_worker_distributed_environment "
-            "(method=%s backend=%s)",
-            self.rank,
-            self.local_rank,
-            self.distributed_init_method,
-            current_platform.dist_backend,
-        )
+        logger.info_once("start init_worker_distributed_environment on xpu")
         init_worker_distributed_environment(
             self.vllm_config,
             self.rank,
@@ -138,26 +99,16 @@ class XPUWorker(Worker):
             self.local_rank,
             current_platform.dist_backend,
         )
-        logger.info(
-            "rank=%d local_rank=%d: init_worker_distributed_environment done",
-            self.rank,
-            self.local_rank,
-        )
+        logger.info_once("finish init_worker_distributed_environment on xpu")
 
-        # oneCCL warm-up all_reduce is unstable in process-spawned test runs:
-        # it may hang in ATL/OFI local topology discovery. Skip this eager
-        # warm-up and rely on the first real collective in model execution.
+        # global all_reduce needed for overall oneccl warm up
         if torch.distributed.is_xccl_available():
-            world_size = torch.distributed.get_world_size()
-            logger.info(
-                "rank=%d local_rank=%d: skipping XCCL warm-up all_reduce "
-                "(world_size=%d, CCL_ATL_TRANSPORT=%s, ZE_AFFINITY_MASK=%s)",
-                self.rank,
-                self.local_rank,
-                world_size,
-                os.environ.get("CCL_ATL_TRANSPORT", "<unset>"),
-                os.environ.get("ZE_AFFINITY_MASK", "<unset>"),
-            )
+            device = torch.device(f"xpu:{self.local_rank}")
+            torch.xpu.set_device(device)
+            logger.info_once("start all reduce on xpu")
+            # torch.distributed.all_reduce(torch.zeros(1).xpu())
+            # torch.xpu.synchronize()
+            logger.info_once("finish all reduce on xpu")
 
         if self.use_v2_model_runner:
             logger.info_once("Using V2 Model Runner")
@@ -190,6 +141,7 @@ class XPUWorker(Worker):
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
             report_usage_stats(self.vllm_config)
+        logger.info_once("finish init device on xpu")
 
     def profile(self, is_start: bool = True, profile_prefix: str | None = None):
         if self.profiler_config is None or self.profiler_config.profiler is None:
