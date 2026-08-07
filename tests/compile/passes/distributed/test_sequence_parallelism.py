@@ -28,6 +28,9 @@ from vllm.distributed.parallel_state import (
     init_distributed_environment,
     initialize_model_parallel,
 )
+from vllm.model_executor.kernels.linear.scaled_mm.pytorch import (
+    BlockWiseTorchFP8ScaledMMLinearKernel,
+)
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
     kFp8Dynamic128Sym,
@@ -166,6 +169,7 @@ class TestAllReduceRMSNormStaticQuantFP8Model(torch.nn.Module):
 class TestAllReduceRMSNormBlockQuantFP8Model(torch.nn.Module):
     activation_quant_key = kFp8Dynamic128Sym
     weight_quant_key = kFp8Static128BlockSym
+    force_kernel: type | None = None
 
     def __init__(self, hidden_size=128, eps=1e-6):
         super().__init__()
@@ -179,6 +183,7 @@ class TestAllReduceRMSNormBlockQuantFP8Model(torch.nn.Module):
                 activation_quant_key=self.activation_quant_key,
                 weight_quant_key=self.weight_quant_key,
                 input_dtype=self.vllm_config.model_config.dtype,
+                force_kernel=self.force_kernel,
             )
             for i in range(3)
         ]
@@ -254,6 +259,26 @@ class TestAllReduceRMSNormBlockQuantFP8Model(torch.nn.Module):
             torch.ops.vllm_ir.fused_add_rms_norm,
             *quant_ops,
         ]
+
+
+class TestAllReduceRMSNormBlockQuantFP8TorchBackendModel(
+    TestAllReduceRMSNormBlockQuantFP8Model
+):
+    """Same as TestAllReduceRMSNormBlockQuantFP8Model, but forces the
+    ``torch`` linear-backend kernel (``torch._scaled_mm``-based
+    BlockWiseTorchFP8ScaledMMLinearKernel) so the SP fusion pass is
+    validated against that specific kernel implementation, not just
+    whichever kernel `choose_scaled_mm_linear_kernel` happens to prefer.
+    """
+
+    force_kernel = BlockWiseTorchFP8ScaledMMLinearKernel
+
+    def check_kernels(self):
+        for layer in self.fp8_linear_layers:
+            assert isinstance(layer.kernel, BlockWiseTorchFP8ScaledMMLinearKernel), (
+                f"expected {BlockWiseTorchFP8ScaledMMLinearKernel.__name__}, "
+                f"got {type(layer.kernel).__name__}"
+            )
 
 
 @multi_gpu_test(num_gpus=2)
@@ -337,6 +362,62 @@ def test_sequence_parallelism_pass_block_fp8(
     fuse_norm_quant: bool,
     dynamic: bool,
 ):
+    num_processes = 2
+
+    def run_torch_spawn(fn, nprocs):
+        # need to use torch.mp.spawn otherwise will have problems with
+        # torch.distributed and cuda
+        torch.multiprocessing.spawn(
+            fn,
+            args=(
+                num_processes,
+                test_model_cls,
+                custom_ops,
+                batch_size,
+                seq_len,
+                hidden_size,
+                dtype,
+                fuse_norm_quant,
+                dynamic,
+            ),
+            nprocs=nprocs,
+        )
+
+    run_torch_spawn(sequence_parallelism_pass_on_test_model, num_processes)
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize(
+    "test_model_cls, custom_ops",
+    [
+        (TestAllReduceRMSNormBlockQuantFP8TorchBackendModel, "+rms_norm,+quant_fp8"),
+        (TestAllReduceRMSNormBlockQuantFP8TorchBackendModel, "+rms_norm,-quant_fp8"),
+        (TestAllReduceRMSNormBlockQuantFP8TorchBackendModel, "-rms_norm,+quant_fp8"),
+        (TestAllReduceRMSNormBlockQuantFP8TorchBackendModel, "-rms_norm,-quant_fp8"),
+    ],
+)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+# block quant requires hidden_size to be a multiple of the 128 group size
+@pytest.mark.parametrize("hidden_size", [128])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("fuse_norm_quant", [True, False])
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.skipif(envs.VLLM_TARGET_DEVICE not in ["xpu"], reason="Only test on XPU")
+def test_sequence_parallelism_pass_block_fp8_torch_backend(
+    test_model_cls: type[torch.nn.Module],
+    custom_ops: str,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype: torch.dtype,
+    fuse_norm_quant: bool,
+    dynamic: bool,
+):
+    """Validate the SP fusion pass against the ``torch`` linear-backend
+    (torch._scaled_mm-based BlockWiseTorchFP8ScaledMMLinearKernel), not
+    just whichever block-scaled kernel is auto-selected on XPU.
+    """
     num_processes = 2
 
     def run_torch_spawn(fn, nprocs):
@@ -465,6 +546,8 @@ def sequence_parallelism_pass_on_test_model(
         backend = TestBackend(*passes_for_backend)
 
         model = test_model_cls(hidden_size)
+        if hasattr(model, "check_kernels"):
+            model.check_kernels()
 
         hidden_states = torch.randn((batch_size * seq_len, hidden_size), dtype=dtype)
 
