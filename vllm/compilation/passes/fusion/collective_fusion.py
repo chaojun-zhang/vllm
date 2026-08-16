@@ -330,6 +330,46 @@ direct_register_custom_op(
 )
 
 
+def _to_scaled_mm_scales(
+    m: int, n: int, scale_a: torch.Tensor, scale_b: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Normalize fp8_gemm's scale shapes to what torch._scaled_mm expects.
+
+    fp8_gemm accepts scale_a as a singleton (per-tensor), [M, 1] (per-token),
+    or [M, k_blocks] (block-quantized); scale_b as a singleton, [N] or [1, N]
+    (per-channel), or [k_blocks, n_blocks] (block-quantized). Block-quantized
+    scales are already in the [M, k_blocks] / [k_blocks, n_blocks] layout
+    torch._scaled_mm's BlockWise mode expects, so they pass through as-is.
+    torch._scaled_mm additionally requires TensorWise scales to be singletons
+    on *both* sides, so a per-tensor scale on one operand is broadcast to
+    match a per-token/per-channel scale on the other.
+    """
+    a_blockwise = scale_a.dim() >= 2 and scale_a.shape[-1] > 1
+    b_blockwise = scale_b.dim() >= 2 and scale_b.shape[0] > 1
+    if a_blockwise or b_blockwise:
+        # Callers store block scales pre-made contiguous in this exact
+        # layout (see XPUFp8BlockScaledMMKernel/XPUMxFp8LinearKernel
+        # process_weights_after_loading), so no copy is needed here.
+        return scale_a, scale_b
+
+    a_scalar = scale_a.numel() == 1
+    b_scalar = scale_b.numel() == 1
+    if a_scalar and b_scalar:
+        return scale_a.reshape(1), scale_b.reshape(1, 1)
+    # expand() produces a stride-0 view, which torch._scaled_mm rejects for
+    # RowWise scales ("both should be contiguous"), so .contiguous() here
+    # is required, unlike the pre-contiguous block scales above.
+    scale_a = (
+        scale_a.reshape(-1, 1) if not a_scalar else scale_a.expand(m, 1).contiguous()
+    )
+    scale_b = (
+        scale_b.reshape(1, -1)
+        if not b_scalar
+        else scale_b.expand(n).reshape(1, n).contiguous()
+    )
+    return scale_a, scale_b
+
+
 def _xpu_fp8_mm_out(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -339,7 +379,56 @@ def _xpu_fp8_mm_out(
     out: torch.Tensor,
     bias: torch.Tensor | None = None,
 ) -> None:
-    torch.ops._xpu_C.fp8_gemm_out(out, A, B, None, scale_a, scale_b, bias)
+    """FP8 GEMM used by the XPU AsyncTP fusions.
+
+    Prefers torch._scaled_mm (upstream native op; dispatches to TensorWise,
+    RowWise, or BlockWise-128x128 internally based on scale shape) and falls
+    back to the oneDNN _xpu_C.fp8_gemm[_out] custom op for scale
+    configurations it doesn't support -- currently MXFP8 (float8_e8m0fnu
+    scales with 32-element groups; torch._scaled_mm's BlockWise mode only
+    supports 128-element groups).
+    """
+    if scale_a.dtype != torch.float8_e8m0fnu:
+        # TODO: once torch._scaled_mm's BlockWise mode supports 32-element
+        # groups (currently hardcoded to 128), drop this dtype check and let
+        # MXFP8 go through the same torch._scaled_mm attempt below instead of
+        # skipping straight to the oneDNN fallback.
+        scale_a_mm, scale_b_mm = _to_scaled_mm_scales(
+            A.shape[0], B.shape[1], scale_a, scale_b
+        )
+        # The block-FP8 path applies bias outside the GEMM and passes an
+        # empty placeholder tensor here (created without a device, so it
+        # lands on CPU). oneDNN's fp8_gemm ignores it based on numel(), but
+        # torch._scaled_mm's device check runs before that, so normalize an
+        # empty bias to None -- which is the correct "no bias" spelling.
+        bias_mm = bias if bias is not None and bias.numel() > 0 else None
+        try:
+            torch._scaled_mm(
+                A,
+                B,
+                scale_a=scale_a_mm,
+                scale_b=scale_b_mm,
+                bias=bias_mm,
+                out_dtype=out.dtype,
+                out=out,
+            )
+            return
+        except RuntimeError as e:
+            # Pass str(e), not the exception object itself: warning_once
+            # dedupes via an lru_cache keyed on (msg, *args), and each
+            # exception instance has a distinct identity/hash, so passing
+            # the object would defeat the "once" behavior and spam a
+            # warning on every call.
+            logger.warning_once(
+                "torch._scaled_mm rejected this FP8 scale configuration "
+                "(%s); falling back to _xpu_C.fp8_gemm_out.",
+                str(e),
+            )
+    # Some vllm_xpu_kernels builds only ship the non-"_out" variant.
+    # Fall back to it and copy into `out` to preserve the in-place
+    # contract that callers (e.g. symmetric-memory pipelined
+    # all-gather/reduce-scatter) rely on.
+    out.copy_(torch.ops._xpu_C.fp8_gemm(A, B, out.dtype, scale_a, scale_b, bias))
 
 
 def fused_xpu_fp8_matmul_reduce_scatter_fake(
@@ -1461,10 +1550,10 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
         override. The alternatives are worse: laundering the scales through
         uint8 spreads a lie about the dtype across the kernel call site, the
         SP pass and every test, and hand-rolling the match loop duplicates
-        `PatternMatcherPass`. This should be replaced by an upstream
-        extension point.
+        `PatternMatcherPass`. Remove this once pytorch/pytorch#193710 adds an
+        upstream extension point.
         """
-        if not current_platform.is_xpu() or not hasattr(torch.ops._xpu_C, "fp8_gemm"):
+        if not current_platform.is_xpu():
             yield
             return
 
