@@ -322,6 +322,64 @@ class TestAGXPUBlockFp8GEMMModel(torch.nn.Module):
         return [torch.ops.vllm.fused_all_gather_xpu_dynamic_scaled_fp8_matmul.default]
 
 
+class TestAGXPUMxFp8GEMMModel(torch.nn.Module):
+    """XPU mxfp8/xpu.py all_gather(quant, scale) + fp8_gemm.
+
+    MXFP8 activation quant is dynamic per-token-group (group size 32) with
+    e8m0 scales, so like block FP8 both the fp8 activation and its scale are
+    produced locally per TP shard and must be all-gathered together before
+    the GEMM. e8m0 is rejected by the collective backend, so the scale is
+    gathered bitwise as uint8 (mirroring what the sequence parallelism pass
+    emits), and the kernel passes the layer bias straight into fp8_gemm
+    instead of the empty tensor placeholder block FP8 uses.
+    """
+
+    GROUP_SIZE = 32
+
+    def __init__(self, hidden_size=128, dtype=torch.bfloat16):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.dtype = dtype
+        k_blocks = hidden_size // self.GROUP_SIZE
+        # weight is kept as [N, K] (not pre-transposed), unlike the static
+        # per-tensor XPU kernel.
+        self.weight = torch.empty([hidden_size, hidden_size], dtype=FP8_DTYPE)
+        # weight's scale, stored as an [N, k_blocks] view over a contiguous
+        # [k_blocks, N] buffer (see XPUMxFp8LinearKernel).
+        self.weight_scale = (
+            torch.ones(k_blocks, hidden_size, dtype=torch.float32)
+            .to(torch.float8_e8m0fnu)
+            .t()
+        )
+
+    def forward(self, input: torch.Tensor):
+        from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
+            xpu_mxfp8_quantize,
+        )
+
+        q_input, input_scale = xpu_mxfp8_quantize(input, FP8_DTYPE)
+        all_gather_q = tensor_model_parallel_all_gather(q_input, dim=0)
+        all_gather_scale = tensor_model_parallel_all_gather(
+            input_scale.view(torch.uint8), dim=0
+        ).view(torch.float8_e8m0fnu)
+
+        fp8_gemm = torch.ops._xpu_C.fp8_gemm(
+            all_gather_q,
+            self.weight.t(),
+            self.dtype,
+            all_gather_scale,
+            self.weight_scale.t(),
+            None,
+        )
+        return fp8_gemm
+
+    def ops_in_model_before(self):
+        return [torch.ops.vllm.all_gather.default]
+
+    def ops_in_model_after(self):
+        return [torch.ops.vllm.fused_all_gather_xpu_dynamic_scaled_fp8_matmul.default]
+
+
 @multi_gpu_test(num_gpus=2)
 @pytest.mark.parametrize(
     "test_model",
@@ -396,6 +454,55 @@ def test_async_tp_pass_replace_xpu_block_fp8(
     dynamic: bool,
 ):
     """Test XPU block FP8 GEMM + all_gather collective fusion pattern."""
+    num_processes = 2
+    distributed_init_method = get_file_store_init_method()
+    torch.multiprocessing.spawn(
+        async_tp_pass_on_test_model,
+        args=(
+            num_processes,
+            test_model,
+            batch_size,
+            seq_len,
+            hidden_size,
+            dtype,
+            dynamic,
+            distributed_init_method,
+        ),
+        nprocs=num_processes,
+    )
+
+
+@multi_gpu_test(num_gpus=2)
+@pytest.mark.parametrize(
+    "test_model",
+    [
+        TestAGXPUMxFp8GEMMModel,
+    ],
+)
+@pytest.mark.parametrize("batch_size", [8])
+@pytest.mark.parametrize("seq_len", [16])
+# mxfp8 quant requires hidden_size to be a multiple of the 32 group size
+@pytest.mark.parametrize("hidden_size", [128])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("dynamic", [True, False])
+@pytest.mark.skipif(
+    envs.VLLM_TARGET_DEVICE not in ["xpu"],
+    reason="XPU MXFP8 AsyncTP patterns only run on XPU",
+)
+def test_async_tp_pass_replace_xpu_mxfp8(
+    test_model,
+    batch_size: int,
+    seq_len: int,
+    hidden_size: int,
+    dtype: torch.dtype,
+    dynamic: bool,
+):
+    """Test XPU MXFP8 GEMM + all_gather collective fusion pattern.
+
+    Guards the e8m0 scale handling: the scale is gathered as uint8, and the
+    pattern is applied outside PatternMatcherPass.apply because Inductor
+    refuses to match nodes with e8m0 inputs.
+    """
     num_processes = 2
     distributed_init_method = get_file_store_init_method()
     torch.multiprocessing.spawn(

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 
 import torch
 import torch._inductor.pattern_matcher as pm
@@ -499,6 +499,12 @@ def fused_all_gather_xpu_dynamic_scaled_fp8_matmul(
     output_shards = output.chunk(world_size)
 
     A = A_shard.new_empty(A_shard.shape[0] * world_size, A_shard.shape[1])
+    # MXFP8 scales are f8e8m0fnu, which the collective backend does not
+    # support. It is unsigned, so uint8 is the natural bitwise alias: gather
+    # as uint8 and restore the view before the GEMM.
+    scale_dtype = A_scale_shard.dtype
+    if scale_dtype is torch.float8_e8m0fnu:
+        A_scale_shard = A_scale_shard.view(torch.uint8)
     A_scale = A_scale_shard.new_empty(
         A_scale_shard.shape[0] * world_size,
         A_scale_shard.shape[1],
@@ -513,7 +519,7 @@ def fused_all_gather_xpu_dynamic_scaled_fp8_matmul(
         _xpu_fp8_mm_out(
             shards[0],
             B.t(),
-            scale_a=shards[1],
+            scale_a=shards[1].view(scale_dtype),
             scale_b=B_scale.t(),
             out=output_shards[rank],
             bias=bias,
@@ -1003,19 +1009,40 @@ class AllGatherXPUDynamicScaledFp8GEMMPattern(BasePattern):
     self-consistent, and the fused op forwards scales and bias untouched.
     """
 
+    # Block FP8 gathers its fp32 scale directly. MXFP8 scales are f8e8m0fnu,
+    # which the collective backend rejects, so the SP pass gathers them
+    # bitwise as uint8 and restores the view afterwards (see
+    # MiddleAllReduceRMSNormXPUMxFP8Pattern) -- an extra pair of view nodes
+    # this pattern has to reproduce.
+    SCALE_DTYPE = torch.float32
+    GROUP_SIZE = 128
+
+    def _all_gather_scale(self, scale_a: torch.Tensor) -> torch.Tensor:
+        if self.SCALE_DTYPE is torch.float8_e8m0fnu:
+            gathered = torch.ops.vllm.all_gather.default(
+                scale_a.view(torch.uint8),
+                dim=0,
+                world_size=self.tp_size,
+                group_name=self.tp.unique_name,
+            )
+            return gathered.view(self.SCALE_DTYPE)
+        return torch.ops.vllm.all_gather.default(
+            scale_a, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
+        )
+
     def get_inputs(self) -> list[torch.Tensor]:
-        m, n, k, group_size = 8, 16, 128, 128
+        m, n, k, group_size = 8, 16, 128, self.GROUP_SIZE
         x = torch.empty([m, k], device=self.device, dtype=FP8_DTYPE)
         # Weight is kept as [N, K] (not pre-transposed), unlike the static
         # per-tensor XPU kernel.
         weight = torch.empty([n, k], device=self.device, dtype=FP8_DTYPE)
         # x's scale: one value per group -> [M, k_groups].
         scale_a = torch.empty(
-            [m, k // group_size], device=self.device, dtype=torch.float32
+            [m, k // group_size], device=self.device, dtype=self.SCALE_DTYPE
         )
         # weight's scale, stored as an [n_groups, k_groups] view.
         scale_b = torch.empty(
-            [1, k // group_size], device=self.device, dtype=torch.float32
+            [1, k // group_size], device=self.device, dtype=self.SCALE_DTYPE
         )
         # Matching the bias as a wildcard rather than a literal is what lets
         # one pattern serve both schemes: block FP8 adds the bias outside the
@@ -1035,9 +1062,7 @@ class AllGatherXPUDynamicScaledFp8GEMMPattern(BasePattern):
             all_gather_x = torch.ops.vllm.all_gather.default(
                 x, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
             )
-            all_gather_scale = torch.ops.vllm.all_gather.default(
-                scale_a, dim=0, world_size=self.tp_size, group_name=self.tp.unique_name
-            )
+            all_gather_scale = self._all_gather_scale(scale_a)
             fp8_gemm = torch.ops._xpu_C.fp8_gemm.default(
                 A=all_gather_x,
                 B=weight.t(),
@@ -1071,6 +1096,18 @@ class AllGatherXPUDynamicScaledFp8GEMMPattern(BasePattern):
         pm.register_replacement(
             pattern, replacement, self.get_inputs(), pm.fwd_only, pm_pass
         )
+
+
+class AllGatherXPUMxFp8GEMMPattern(AllGatherXPUDynamicScaledFp8GEMMPattern):
+    """MXFP8 flavour of the dynamically-scaled all-gather + FP8 GEMM fusion.
+
+    Identical to the block FP8 flavour except that the e8m0 activation scale
+    is gathered bitwise as uint8, which adds a pair of view nodes the pattern
+    must match.
+    """
+
+    SCALE_DTYPE = torch.float8_e8m0fnu
+    GROUP_SIZE = 32
 
 
 class FlashInferBMMFP8ReduceScatterPattern(
@@ -1379,10 +1416,14 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
                 # and would replace it with the static op, which does not
                 # all-gather the activation scale. The reverse cannot happen
                 # (this pattern requires A_scale_ to be an all_gather node),
-                # so registration order alone resolves the overlap.
+                # so registration order alone resolves the overlap. The same
+                # applies to the MXFP8 flavour registered right after.
                 AllGatherXPUDynamicScaledFp8GEMMPattern(
                     self.model_dtype, self.device
                 ).register(self.pm_pass)
+                AllGatherXPUMxFp8GEMMPattern(self.model_dtype, self.device).register(
+                    self.pm_pass
+                )
                 AllGatherXPUFp8GEMMPattern(self.model_dtype, self.device).register(
                     self.pm_pass
                 )
@@ -1398,8 +1439,52 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
         ), "AsyncTPPass requires full-graph compilation"
         return True
 
+    @contextmanager
+    def _allow_xpu_fp8_gemm_anchor(self) -> Iterator[None]:
+        """Let `_xpu_C.fp8_gemm` anchor a pattern despite its e8m0 scales.
+
+        `PatternMatcherPass.apply` calls `fallback_node_due_to_unsupported_type`
+        on every candidate anchor and skips the ones whose inputs Inductor
+        cannot lower. `float8_e8m0fnu` is unconditionally on that list except
+        for a hardcoded handful of aten ops (`view.dtype`, `cat`, `clone`,
+        `_scaled_mm`), so an MXFP8 GEMM is never even considered for matching.
+        See pytorch@2d8a7a26fb40:
+        `_inductor/lowering.py::unsupported_input_tensor` (the e8m0 branch,
+        L2822) and `_inductor/pattern_matcher.py::PatternMatcherPass.apply`
+        (L2650).
+
+        The restriction exists because Triton cannot do e8m0 arithmetic, but
+        `_xpu_C.fp8_gemm` is a custom kernel Inductor only ever falls back to,
+        so it does not apply here.
+
+        Inductor exposes no way to extend that allowlist, hence the scoped
+        override. The alternatives are worse: laundering the scales through
+        uint8 spreads a lie about the dtype across the kernel call site, the
+        SP pass and every test, and hand-rolling the match loop duplicates
+        `PatternMatcherPass`. This should be replaced by an upstream
+        extension point.
+        """
+        if not current_platform.is_xpu() or not hasattr(torch.ops._xpu_C, "fp8_gemm"):
+            yield
+            return
+
+        fp8_gemm = torch.ops._xpu_C.fp8_gemm.default
+        original = pm.fallback_node_due_to_unsupported_type
+
+        def patched(node: fx.Node, allow_cpu_inputs: bool = True) -> bool:
+            if node.target is fp8_gemm:
+                return False
+            return original(node, allow_cpu_inputs)
+
+        pm.fallback_node_due_to_unsupported_type = patched
+        try:
+            yield
+        finally:
+            pm.fallback_node_due_to_unsupported_type = original
+
     @VllmInductorPass.time_and_log
     def __call__(self, graph: fx.Graph) -> None:
-        self.matched_count = self.pm_pass.apply(graph)
+        with self._allow_xpu_fp8_gemm_anchor():
+            self.matched_count = self.pm_pass.apply(graph)
         VllmPatternMatcherPass.match_table[self.pass_name] += self.matched_count
         logger.info("Replaced %s patterns", self.matched_count)

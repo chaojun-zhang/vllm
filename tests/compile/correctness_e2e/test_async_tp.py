@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tests.models.registry import HF_EXAMPLE_MODELS
+from tests.models.registry import HF_EXAMPLE_MODELS, _HfExamplesInfo
 from tests.utils import (
     compare_two_settings,
     create_new_process_for_each_test,
@@ -15,6 +15,9 @@ from vllm.config import (
 )
 from vllm.platforms import current_platform
 from vllm.utils.flashinfer import has_flashinfer
+
+XPU_MXFP8_MODEL_ID = "INCModel/Qwen3-32B-MXFP8-CT-AutoRound"
+XPU_MXFP8_MODEL_INFO = _HfExamplesInfo(XPU_MXFP8_MODEL_ID)
 
 NVFP4_MODEL_ID = "nvidia/Llama-3.1-8B-Instruct-NVFP4"
 NVFP4_HF_OVERRIDES = {
@@ -238,4 +241,85 @@ def test_async_tp_pass_nvfp4_correctness(num_gpus_available: int):
         tp_args,
         method="generate",
         force_v1_runner=True,
+    )
+
+
+@create_new_process_for_each_test()
+@pytest.mark.parametrize("model_id", [XPU_MXFP8_MODEL_ID])
+@pytest.mark.parametrize("tp_size", [2])
+@pytest.mark.parametrize("async_tp_enabled", [True])
+@pytest.mark.parametrize("distributed_backend", ["mp"])
+@pytest.mark.skipif(
+    not current_platform.is_xpu(),
+    reason="XPU MXFP8 AsyncTP correctness only runs on XPU",
+)
+def test_async_tp_pass_xpu_mxfp8_correctness(
+    model_id: str,
+    tp_size: int,
+    async_tp_enabled: bool,
+    distributed_backend: str,
+    num_gpus_available: int,
+    monkeypatch,
+):
+    XPU_MXFP8_MODEL_INFO.check_transformers_version(on_fail="skip")
+    XPU_MXFP8_MODEL_INFO.check_available_online(on_fail="skip")
+
+    pp_size = 1
+    if num_gpus_available < tp_size:
+        pytest.skip(f"Need at least {tp_size} x {pp_size} GPUs")
+
+    common_args = [
+        "--dtype",
+        "bfloat16",
+        "--max-model-len",
+        "2048",
+        "--max-num-seqs",
+        "8",
+    ]
+
+    compilation_config = {
+        "mode": CompilationMode.VLLM_COMPILE,
+        "compile_sizes": [2, 4, 8],
+        "splitting_ops": [],
+        "pass_config": {
+            "enable_sp": True,
+            "fuse_gemm_comms": async_tp_enabled,
+            # MXFP8 has no fused rms_norm+quant kernel yet, so norm/act quant
+            # fusion must stay disabled.
+            "fuse_norm_quant": False,
+            "fuse_act_quant": False,
+            # Test prompts are far shorter than the SP heuristic's token
+            # threshold, so force sp_min_token_num=1 to make the MXFP8
+            # AsyncTP all-gather pattern actually fire.
+            "sp_min_token_num": 1,
+        },
+    }
+
+    async_tp_args = [
+        *common_args,
+        "--tensor-parallel-size",
+        str(tp_size),
+        "--distributed-executor-backend",
+        distributed_backend,
+        "--compilation_config",
+        json.dumps(compilation_config),
+    ]
+
+    tp_args = [
+        *common_args,
+        "--tensor-parallel-size",
+        str(tp_size),
+        "--distributed-executor-backend",
+        "mp",
+    ]
+
+    compare_two_settings(
+        model_id,
+        async_tp_args,
+        tp_args,
+        method="generate",
+        force_v1_runner=True,
+        # 32B MXFP8 weights plus three compile sizes exceed the default
+        # startup budget on XPU.
+        max_wait_seconds=900,
     )
