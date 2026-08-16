@@ -173,6 +173,9 @@ def test_async_tp_pass_xpu_block_fp8_correctness(
         tp_args,
         method="generate",
         force_v1_runner=True,
+        # 32B weights plus three compile sizes exceed the default startup
+        # budget on XPU.
+        max_wait_seconds=900,
     )
 
 
