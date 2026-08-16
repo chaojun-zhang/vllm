@@ -1461,8 +1461,8 @@ class AsyncTPPass(VllmFusionPatternMatcherPass):
         override. The alternatives are worse: laundering the scales through
         uint8 spreads a lie about the dtype across the kernel call site, the
         SP pass and every test, and hand-rolling the match loop duplicates
-        `PatternMatcherPass`. This should be replaced by an upstream
-        extension point.
+        `PatternMatcherPass`. Remove this once pytorch/pytorch#193710 adds an
+        upstream extension point.
         """
         if not current_platform.is_xpu() or not hasattr(torch.ops._xpu_C, "fp8_gemm"):
             yield
