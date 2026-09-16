@@ -10,7 +10,7 @@ from vllm.platforms import current_platform
 
 
 def _addrs(buffers: list[torch.Tensor]) -> torch.Tensor:
-    return torch.tensor([b.data_ptr() for b in buffers], dtype=torch.int64)
+    return torch.tensor([b.data_ptr() for b in buffers], dtype=torch.uint64)
 
 
 def _run_batch(sizes: list[int]) -> None:

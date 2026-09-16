@@ -224,12 +224,10 @@ def _new_descriptor_buffers(
     num_copy_ops: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     pin = PIN_MEMORY
-    # CUDA cache_kernels.cu requires int64; XPU DMA engine requires uint64.
-    ptr_dtype = torch.uint64 if current_platform.is_xpu() else torch.int64
     return (
-        torch.empty(num_copy_ops, dtype=ptr_dtype, pin_memory=pin),
-        torch.empty(num_copy_ops, dtype=ptr_dtype, pin_memory=pin),
-        torch.empty(num_copy_ops, dtype=ptr_dtype, pin_memory=pin),
+        torch.empty(num_copy_ops, dtype=torch.uint64, pin_memory=pin),
+        torch.empty(num_copy_ops, dtype=torch.uint64, pin_memory=pin),
+        torch.empty(num_copy_ops, dtype=torch.int64, pin_memory=pin),
     )
 
 

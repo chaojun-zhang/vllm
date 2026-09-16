@@ -113,12 +113,14 @@ void swap_blocks_batch(const torch::stable::Tensor& src_ptrs,
   STD_TORCH_CHECK(src_ptrs.device().is_cpu(), "src_ptrs must be on CPU");
   STD_TORCH_CHECK(dst_ptrs.device().is_cpu(), "dst_ptrs must be on CPU");
   STD_TORCH_CHECK(sizes.device().is_cpu(), "sizes must be on CPU");
-  STD_TORCH_CHECK(src_ptrs.scalar_type() == torch::headeronly::ScalarType::Long,
-                  "src_ptrs must be int64");
-  STD_TORCH_CHECK(dst_ptrs.scalar_type() == torch::headeronly::ScalarType::Long,
-                  "dst_ptrs must be int64");
-  STD_TORCH_CHECK(sizes.scalar_type() == torch::headeronly::ScalarType::Long,
-                  "sizes must be int64");
+  STD_TORCH_CHECK(
+      src_ptrs.scalar_type() == torch::headeronly::ScalarType::UInt64,
+      "src_ptrs must be uint64");
+  STD_TORCH_CHECK(
+      dst_ptrs.scalar_type() == torch::headeronly::ScalarType::UInt64,
+      "dst_ptrs must be uint64");
+  STD_TORCH_CHECK(sizes.scalar_type() == torch::headeronly::ScalarType::UInt64,
+                  "sizes must be uint64");
 
   const int64_t n = src_ptrs.size(0);
   STD_TORCH_CHECK(dst_ptrs.size(0) == n, "dst_ptrs length must match src_ptrs");
@@ -126,19 +128,19 @@ void swap_blocks_batch(const torch::stable::Tensor& src_ptrs,
 
   if (n == 0) return;
 
-  int64_t* src_data = src_ptrs.mutable_data_ptr<int64_t>();
-  int64_t* dst_data = dst_ptrs.mutable_data_ptr<int64_t>();
-  int64_t* size_data = sizes.mutable_data_ptr<int64_t>();
+  uint64_t* src_data = src_ptrs.mutable_data_ptr<uint64_t>();
+  uint64_t* dst_data = dst_ptrs.mutable_data_ptr<uint64_t>();
+  uint64_t* size_data = sizes.mutable_data_ptr<uint64_t>();
 
   const cudaStream_t stream = get_current_cuda_stream();
 
   // Use cuMemcpyBatchAsync / hipMemcpyBatchAsync to submit all copies in a
-  // single driver call, amortizing per-copy submission overhead. int64_t
+  // single driver call, amortizing per-copy submission overhead. uint64_t
   // and CUdeviceptr/void*/size_t are all 8 bytes on 64-bit platforms, so we
   // reinterpret_cast the tensor data directly to avoid copies.
-  static_assert(sizeof(size_t) == sizeof(int64_t));
+  static_assert(sizeof(size_t) == sizeof(uint64_t));
 #if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 12080
-  static_assert(sizeof(CUdeviceptr) == sizeof(int64_t));
+  static_assert(sizeof(CUdeviceptr) == sizeof(uint64_t));
   // Resolve cuMemcpyBatchAsync at runtime via cuGetProcAddress so that
   // binaries compiled with CUDA 12.8+ still work on older drivers, and
   // we avoid the CUDA 13.0 header remapping (#define to _v2 signature).

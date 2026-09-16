@@ -11,12 +11,6 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from vllm.platforms import current_platform
-
-# CUDA/ROCm cache_kernels.cu requires int64 pointers; the XPU DMA engine
-# requires uint64 (see vllm._custom_ops.swap_blocks_batch).
-_PTR_DTYPE = torch.uint64 if current_platform.is_xpu() else torch.int64
-
 
 class DescriptorBuffers(NamedTuple):
     src_ptrs: torch.Tensor
@@ -65,7 +59,7 @@ class DescriptorBufferPool:
     """Pool of descriptor buffer triples for swap_blocks_batch.
 
     Each buffer is a `DescriptorBuffers` namedtuple of three 1-D tensors
-    (dtype `_PTR_DTYPE`, platform-dependent) of equal length, paired with
+    `torch.uint64` of equal length, paired with
     numpy aliases used to fill them. Buffers are recycled across steps; if a
     returned buffer is too small it is discarded and a fresh one allocated.
     """
@@ -80,7 +74,8 @@ class DescriptorBufferPool:
             bufs = self._pool.pop()
             if bufs.src_ptrs.numel() >= n:
                 return bufs
-        src, dst, sizes = (torch.empty(n, dtype=_PTR_DTYPE) for _ in range(3))
+        src, dst = (torch.empty(n, dtype=torch.uint64) for _ in range(2))
+        sizes = torch.empty(n, dtype=torch.int64)
         return DescriptorBuffers(
             src, dst, sizes, src.numpy(), dst.numpy(), sizes.numpy()
         )

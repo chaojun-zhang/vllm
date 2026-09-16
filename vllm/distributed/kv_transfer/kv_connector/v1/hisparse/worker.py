@@ -60,7 +60,8 @@ class _SlotMappingStaging:
 
 
 def _allocate_dma_descriptors(size: int) -> _DMADescriptors:
-    src, dst, sizes = (torch.empty(size, dtype=torch.int64) for _ in range(3))
+    src, dst = (torch.empty(size, dtype=torch.uint64) for _ in range(2))
+    sizes = torch.empty(size, dtype=torch.int64)
     return _DMADescriptors(
         src,
         dst,

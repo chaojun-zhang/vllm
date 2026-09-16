@@ -10,7 +10,7 @@ from vllm.v1.kv_offload.cpu.swap_blocks_triton import swap_blocks_batch
 
 
 def _addrs(buffers: list[torch.Tensor]) -> torch.Tensor:
-    return torch.tensor([b.data_ptr() for b in buffers], dtype=torch.int64)
+    return torch.tensor([b.data_ptr() for b in buffers], dtype=torch.uint64)
 
 
 @pytest.mark.skipif(
