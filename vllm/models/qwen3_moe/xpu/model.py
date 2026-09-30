@@ -124,8 +124,7 @@ class Qwen3MoeDecoderLayer(_Qwen3MoeDecoderLayer):
             [] if not hasattr(config, "mlp_only_layers") else config.mlp_only_layers
         )
         if (layer_idx not in mlp_only_layers) and (
-            config.num_experts > 0
-            and (layer_idx + 1) % config.decoder_sparse_step == 0
+            config.num_experts > 0 and (layer_idx + 1) % config.decoder_sparse_step == 0
         ):
             self.mlp = Qwen3MoeSparseMoeBlock(
                 vllm_config=vllm_config,

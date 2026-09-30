@@ -10,7 +10,6 @@ from vllm.distributed import (
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
     get_tp_group,
-    split_tensor_along_last_dim,
     tensor_model_parallel_all_gather,
     tensor_model_parallel_reduce_scatter,
 )
@@ -81,26 +80,27 @@ def sp_padding_mask(
 
 
 def is_sp_active(parallel_config: "ParallelConfig") -> bool:
-    """Whether sequence parallelism is active for the in-flight forward call.
+    """Whether SP should run for the in-flight forward call.
 
-    ``parallel_config`` must come from a reliable, non-global source (e.g.
-    the ``vllm_config`` a model's ``__init__`` receives directly, cached on
-    ``self``) -- ``get_current_vllm_config()`` is only guaranteed to be set
-    during model construction, not during a real per-request forward call
-    in the serving worker process (see ``gpu_worker.py::execute_model``,
-    which doesn't wrap itself in ``set_current_vllm_config()``).
+    True only if SP is enabled, there's a live batch to check (a forward
+    context with a batch descriptor), and its token count is at least
+    ``sequence_parallel_min_tokens``.
+
+    Args:
+        parallel_config: Pass the ``vllm_config`` a model's ``__init__``
+            receives, cached on ``self`` -- not ``get_current_vllm_config()``,
+            which isn't set during a real forward call in the worker process.
+
     """
     if not parallel_config.use_sequence_parallel:
         return False
 
     if not is_forward_context_available():
-        # No live batch to check against; conservatively do not engage SP.
         return False
     ctx = get_forward_context()
     if ctx.batch_descriptor is None:
         return False
 
-    # Padded cudagraph bucket size, fixed per bucket.
     num_tokens = ctx.batch_descriptor.num_tokens
     return num_tokens >= parallel_config.sequence_parallel_min_tokens
 
@@ -110,82 +110,90 @@ def mark_sp_region(
     exit_before: "ColumnParallelLinear",
     parallel_config: "ParallelConfig",
 ) -> None:
-    """Register an SP region on a row/column-linear boundary pair:
-    `entry_after`'s output boundary scatters the row-parallel GEMM's
-    output down to a local shard (entering SP); `exit_before`'s input
-    boundary gathers the incoming local shard back to full tokens before
-    its own column-parallel GEMM (exiting SP again). Everything between
-    the two -- typically a residual add + norm -- runs sharded.
+    """Mark the region between two linear layers as sequence-parallel.
+
+    Args:
+        entry_after: Row-parallel layer whose output enters the region --
+            it's reduce-scattered down to a local shard.
+        exit_before: Column-parallel layer whose input exits the region --
+            it's all-gathered back to full tokens before its own GEMM.
+        parallel_config: The parallelism configuration.
+
+    Everything in between (typically a residual add + norm) runs on the
+    local shard. Only each layer's ``forward`` is wrapped; no other
+    behavior (bias, ``gather_output``, ``return_bias``, ...) changes.
+
+    The wrapper picks one of two things per call, based on whether SP is
+    active right now:
+    - Fused kernel available: flips its ``set_fuse_gemm_comms`` switch,
+      which redirects the quant method's GEMM call to the fused
+      comm+GEMM op for that one call.
+    - Otherwise: all-gathers/reduce-scatters around the plain
+      ``linear_forward``, which always still runs.
+
+    No-op when ``enable_sequence_parallel`` is off.
+
     """
     if not parallel_config.enable_sequence_parallel:
         return
 
-    def _wrap_all_gather(linear: "ColumnParallelLinear") -> None:
+    def _patch_column_parallel_linear(linear: "ColumnParallelLinear") -> None:
         linear_forward = linear.forward
+        fused_kernel = None
+        if parallel_config.enable_sequence_parallel_fuse_gemm_comms:
+            from vllm.model_executor.kernels.fused_comm import (
+                init_all_gather_gemm_kernel,
+            )
+
+            fused_kernel = init_all_gather_gemm_kernel(linear)
 
         def forward(
             x, *args, **kwargs
         ) -> torch.Tensor | tuple[torch.Tensor, Parameter | None]:
-            if not is_sp_active(parallel_config):
-                # SP off for this call: restore the layer's own gather behavior.
-                return linear_forward(x, *args, **kwargs)
-
-            bias = linear.bias if not linear.skip_bias_add else None
-            output = linear.quant_method.apply(linear, sp_all_gather(x), bias)
-
-            # Match the un-wrapped ColumnParallelLinear.forward, which
-            # all-gathers its output across the output-feature dim when
-            # `gather_output` is set.
-            if linear.gather_output and linear.tp_size > 1:
-                output = tensor_model_parallel_all_gather(output)
-
-            if not linear.return_bias:
-                return output
-            output_bias = linear.bias if linear.skip_bias_add else None
-            return output, output_bias
+            sp_active = is_sp_active(parallel_config)
+            if fused_kernel is not None:
+                fused_kernel.set_fuse_gemm_comms(sp_active)
+            elif sp_active:
+                x = sp_all_gather(x)
+            return linear_forward(x, *args, **kwargs)
 
         linear.forward = forward
 
-    def _wrap_reduce_scatter(linear: "RowParallelLinear") -> None:
-        # `linear.reduce_results` (normally True) is intentionally left
-        # untouched here, rather than forced to False at construction:
-        # whether SP is active is a per-call, runtime decision, so which
-        # collective runs (all-reduce vs. reduce-scatter) has to be a
-        # per-call decision too. When SP is off below, we fall through to
-        # the original `linear_forward`, which still honors
-        # `reduce_results` and all-reduces normally. When SP is on, we
-        # bypass `linear.forward` entirely (calling `quant_method.apply`
-        # directly on the un-reduced partial output), so `reduce_results`
-        # plays no role either way -- forcing it to False would silently
-        # break the SP-off branch instead.
+    def _patch_row_parallel_linear(linear: "RowParallelLinear") -> None:
         linear_forward = linear.forward
+        fused_kernel = None
+        if parallel_config.enable_sequence_parallel_fuse_gemm_comms:
+            from vllm.model_executor.kernels.fused_comm import (
+                init_gemm_reduce_scatter_kernel,
+            )
+
+            fused_kernel = init_gemm_reduce_scatter_kernel(linear)
+        use_fused_kernel = fused_kernel is not None
 
         def forward(
             x: torch.Tensor,
         ) -> torch.Tensor | tuple[torch.Tensor, Parameter | None]:
-            if not is_sp_active(parallel_config):
+            sp_active = is_sp_active(parallel_config)
+            if use_fused_kernel:
+                fused_kernel.set_fuse_gemm_comms(sp_active)
+            if not sp_active:
                 return linear_forward(x)
 
-            if linear.input_is_parallel:
-                input_parallel = x
-            else:
-                split_input = split_tensor_along_last_dim(
-                    x, num_partitions=linear.tp_size
-                )
-                input_parallel = split_input[linear.tp_rank].contiguous()
-            bias_ = (
-                None if (linear.tp_rank > 0 or linear.skip_bias_add) else linear.bias
-            )
+            reduce_results = linear.reduce_results
+            linear.reduce_results = False
+            try:
+                output = linear_forward(x)
+            finally:
+                linear.reduce_results = reduce_results
 
-            output = linear.quant_method.apply(linear, input_parallel, bias_)
-            output = sp_reduce_scatter(output)
-
-            if not linear.return_bias:
+            if use_fused_kernel:
                 return output
-            output_bias = linear.bias if linear.skip_bias_add else None
-            return output, output_bias
+            if linear.return_bias:
+                output, bias = output
+                return sp_reduce_scatter(output), bias
+            return sp_reduce_scatter(output)
 
         linear.forward = forward
 
-    _wrap_all_gather(exit_before)
-    _wrap_reduce_scatter(entry_after)
+    _patch_column_parallel_linear(exit_before)
+    _patch_row_parallel_linear(entry_after)

@@ -201,6 +201,10 @@ class ParallelConfig:
     Below this, SP-marked layers fall back to plain tensor parallelism
     (all_reduce), avoiding collective overhead on small (e.g. decode)
     batches. 0 means SP is always active whenever enabled."""
+    enable_sequence_parallel_fuse_gemm_comms: bool = False
+    """Enable fused AllGather+GEMM and GEMM+ReduceScatter ops (via
+    torch.distributed._symmetric_memory) for attention and dense MLP
+    linear layers. Shares sequence_parallel_min_tokens."""
     enable_ep_weight_filter: bool = False
     """Skip non-local expert weights during model loading when expert
     parallelism is active.  Each rank only reads its own expert shard from
