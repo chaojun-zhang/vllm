@@ -24,50 +24,22 @@
 """Inference-only Qwen3 model compatible with HuggingFace weights."""
 
 from torch import nn
-from transformers import Qwen3Config
 
-from vllm.config import CacheConfig, VllmConfig
+from vllm.config import VllmConfig
 from vllm.distributed import get_pp_group
 from vllm.logger import init_logger
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.models.qwen2 import Qwen2Model
-from vllm.model_executor.models.qwen3 import Qwen3DecoderLayer as Qwen3DecoderLayerBase
+from vllm.model_executor.models.qwen3 import Qwen3DecoderLayer
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM as Qwen3ForCausalLMBase
 from vllm.model_executor.models.utils import (
     PPMissingLayer,
     maybe_prefix,
 )
+from vllm.models.common.ops.sequence_parallel import mark_sp_region
 
 logger = init_logger(__name__)
-
-
-class Qwen3DecoderLayer(Qwen3DecoderLayerBase):
-    """Identical to the upstream layer -- this vendor fork exists so
-    sequence-parallel and other XPU-specific behavior can be layered on
-    top without touching the upstream model."""
-
-    def __init__(
-        self,
-        config: Qwen3Config,
-        cache_config: CacheConfig | None = None,
-        quant_config: QuantizationConfig | None = None,
-        prefix: str = "",
-        per_layer_sliding_window: int | None = None,
-    ) -> None:
-        super().__init__(
-            config,
-            cache_config=cache_config,
-            quant_config=quant_config,
-            prefix=prefix,
-            per_layer_sliding_window=per_layer_sliding_window,
-        )
-
-
-ALL_DECODER_LAYER_TYPES = {
-    "attention": Qwen3DecoderLayer,
-}
 
 
 class Qwen3Model(Qwen2Model):
@@ -75,6 +47,28 @@ class Qwen3Model(Qwen2Model):
         super().__init__(
             vllm_config=vllm_config, prefix=prefix, decoder_layer_type=Qwen3DecoderLayer
         )
+        self.parallel_config = vllm_config.parallel_config
+        if self.parallel_config.use_sequence_parallel:
+            layers = self.layers[self.start_layer : self.end_layer]
+            for i, layer in enumerate(layers):
+                # Region 1 -- after attention: o_proj -> post_attention_layernorm
+                # -> gate_up_proj. ReduceScatter -> sharded residual/norm ->
+                # AllGather, replacing AllReduce + norm.
+                mark_sp_region(
+                    entry_after=layer.self_attn.o_proj,
+                    exit_before=layer.mlp.gate_up_proj,
+                    parallel_config=self.parallel_config,
+                )
+                if i + 1 < len(layers):
+                    # Region 2 -- after MLP: down_proj -> next layer's
+                    # input_layernorm -> next layer's qkv_proj. The last
+                    # layer has no next qkv_proj, so its down_proj and the
+                    # final norm run on full tokens instead.
+                    mark_sp_region(
+                        entry_after=layer.mlp.down_proj,
+                        exit_before=layers[i + 1].self_attn.qkv_proj,
+                        parallel_config=self.parallel_config,
+                    )
 
 
 class Qwen3ForCausalLM(Qwen3ForCausalLMBase):
