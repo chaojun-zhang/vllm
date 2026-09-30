@@ -83,6 +83,7 @@ def sp_padding_mask(
     return is_padding[tp_rank * chunk : (tp_rank + 1) * chunk]
 
 
+
 def is_sequence_parallel_active(parallel_config: "ParallelConfig") -> bool:
     """Whether sequence parallelism is active for the in-flight forward call.
 
@@ -133,6 +134,12 @@ def suspend_sequence_parallel_boundary(
 
     def _wrap_all_gather(linear: "ColumnParallelLinear") -> None:
         linear_forward = linear.forward
+        fused_kernel = None
+        if parallel_config.enable_sequence_parallel_fuse_gemm_comms:
+            from vllm.model_executor.kernels.fused_comm import (
+                init_fused_comm_kernel,
+            )
+            fused_kernel = init_fused_comm_kernel(linear)
 
         def forward(x, *args, **kwargs) -> torch.Tensor | tuple[torch.Tensor, Parameter | None]:
             if not is_sequence_parallel_active(parallel_config):
@@ -140,12 +147,17 @@ def suspend_sequence_parallel_boundary(
                 return linear_forward(x, *args, **kwargs)
 
             bias = linear.bias if not linear.skip_bias_add else None
-            logger.info_once("SP input boundary: using all_gather + gemm")
-            output = linear.quant_method.apply(linear, sp_all_gather(x), bias)
+            if fused_kernel is not None:
+                logger.info_once("SP input boundary: using fused all_gather + gemm")
+                output = fused_kernel.apply(x, bias)
+            else:
+                logger.info_once("SP input boundary: using all_gather + gemm")
+                output = linear.quant_method.apply(linear, sp_all_gather(x), bias)
 
-            # Gather (and then GEMM) on the padded, TP-aligned chunk size,
-            # which can be a few rows longer than the true token count;
-            # trim here instead of trusting the GEMM to do it.
+            # Both branches gather (and then GEMM) on the padded, TP-aligned
+            # chunk size, which can be a few rows longer than the true token
+            # count; trim once here so neither branch has to be trusted to
+            # do it on its own.
             full_num_tokens = _current_num_tokens()
             if full_num_tokens is not None:
                 output = output[:full_num_tokens]
@@ -160,6 +172,12 @@ def suspend_sequence_parallel_boundary(
 
     def _wrap_reduce_scatter(linear: "RowParallelLinear") -> None:
         linear_forward = linear.forward
+        fused_kernel = None
+        if parallel_config.enable_sequence_parallel_fuse_gemm_comms:
+            from vllm.model_executor.kernels.fused_comm import (
+                init_fused_comm_kernel,
+            )
+            fused_kernel = init_fused_comm_kernel(linear)
 
         def forward(
                 x: torch.Tensor,
@@ -174,9 +192,14 @@ def suspend_sequence_parallel_boundary(
                 input_parallel = split_input[linear.tp_rank].contiguous()
             bias_ = None if (linear.tp_rank > 0 or linear.skip_bias_add) else linear.bias
 
-            logger.info_once("SP output boundary: using gemm + reduce_scatter")
-            output = linear.quant_method.apply(linear, input_parallel, bias_)
-            output = sp_reduce_scatter(output)
+            if fused_kernel is not None:
+                logger.info_once(
+                    "SP output boundary: using fused gemm + reduce_scatter")
+                output = fused_kernel.apply(input_parallel, bias_)
+            else:
+                logger.info_once("SP output boundary: using gemm + reduce_scatter")
+                output = linear.quant_method.apply(linear, input_parallel, bias_)
+                output = sp_reduce_scatter(output)
 
             if not linear.return_bias:
                 return output

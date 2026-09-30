@@ -191,6 +191,10 @@ class ParallelConfig:
     (all_reduce) instead of chunking/gathering, which avoids paying
     collective overhead on small (e.g. decode-phase) batches. 0 means
     sequence parallelism is always active whenever enabled."""
+    enable_sequence_parallel_fuse_gemm_comms: bool = False
+    """Enable fused AG+GEMM and GEMM+RS ops (via
+    torch.distributed._symmetric_memory) for attention and dense MLP
+    linear layers. Shares sequence_parallel_min_tokens."""
     enable_ep_weight_filter: bool = False
     """Skip non-local expert weights during model loading when expert
     parallelism is active.  Each rank only reads its own expert shard from
