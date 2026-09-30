@@ -1382,6 +1382,15 @@ class VllmConfig:
                 )
         if self.lora_config is not None:
             self.lora_config.verify_with_model_config(self.model_config)
+            if self.parallel_config.use_sequence_parallel:
+                raise ValueError(
+                    "Sequence parallelism (--enable-sequence-parallel) is "
+                    "not yet supported together with LoRA. LoRA replaces "
+                    "the wrapped Linear layers with adapter modules that "
+                    "don't go through the sequence-parallel suspend/resume "
+                    "boundaries, which would silently produce incorrect "
+                    "results. Disable one of them."
+                )
 
         if (
             self.mamba_config.enable_stochastic_rounding
