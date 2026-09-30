@@ -14,7 +14,9 @@ from vllm.distributed import (
     get_pp_group,
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
+    tensor_model_parallel_all_gather,
 )
+from vllm.distributed.communication_op import tensor_model_parallel_reduce_scatter
 from vllm.forward_context import get_forward_context
 from vllm.model_executor.layers.activation import SiluAndMul, SiluAndMulWithClamp
 from vllm.model_executor.layers.fused_moe import (
@@ -57,6 +59,7 @@ from vllm.model_executor.models.utils import (
     is_pp_missing_parameter,
     make_layers,
     maybe_prefix,
+    sequence_parallel_chunk,
 )
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.models.deepseek_v4.xpu.xpu_sparse import DeepseekV4XPUAttention
@@ -808,7 +811,10 @@ class DeepseekV4DecoderLayer(nn.Module):
         import vllm.model_executor.layers.mhc  # noqa: F401
 
         config = vllm_config.model_config.hf_config
+        parallel_config = vllm_config.parallel_config
         self.hidden_size = config.hidden_size
+        self.sp = parallel_config.use_sequence_parallel
+        self._sp_threshold = parallel_config.sequence_parallel_min_tokens
 
         self.rms_norm_eps = config.rms_norm_eps
         self.attn = DeepseekV4XPUAttention(
@@ -913,6 +919,11 @@ class DeepseekV4DecoderLayer(nn.Module):
     ) -> tuple[
         torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
     ]:
+        if self.sp and residual is not None:
+            return self._forward_sp(
+                x, positions, input_ids, post_mix, res_mix, residual
+            )
+
         if residual is None:
             # First layer: run standalone hc_pre
             residual = x
@@ -956,6 +967,61 @@ class DeepseekV4DecoderLayer(nn.Module):
         x = self.ffn(x, input_ids)
         return x, residual, post_mix, res_mix
 
+    def _forward_sp(
+        self,
+        x: torch.Tensor,
+        positions: torch.Tensor,
+        input_ids: torch.Tensor | None,
+        post_mix: torch.Tensor | None,
+        res_mix: torch.Tensor | None,
+        residual: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
+    ]:
+        # Eager SP: HC pre/post fusion runs on local-sized tensors.
+        # All-gather/reduce-scatter wraps the attention and FFN sub-blocks.
+        residual, post_mix, res_mix, x = self.mhc_fused_post_pre(
+            x,
+            residual,
+            post_mix,
+            res_mix,
+            self.hc_attn_fn,
+            self.hc_attn_scale,
+            self.hc_attn_base,
+            self.rms_norm_eps,
+            self.hc_eps,
+            self.hc_eps,
+            self.hc_post_alpha,
+            self.hc_sinkhorn_iters,
+        )
+
+        x = self.attn_norm(x)
+        # AG → attention → RS
+        x = tensor_model_parallel_all_gather(x, dim=0)
+        x = self.attn(positions, x, None)
+        x = tensor_model_parallel_reduce_scatter(x, dim=0)
+
+        residual, post_mix, res_mix, x = self.mhc_fused_post_pre(
+            x,
+            residual,
+            post_mix,
+            res_mix,
+            self.hc_ffn_fn,
+            self.hc_ffn_scale,
+            self.hc_ffn_base,
+            self.rms_norm_eps,
+            self.hc_eps,
+            self.hc_eps,
+            self.hc_post_alpha,
+            self.hc_sinkhorn_iters,
+        )
+        x = self.ffn_norm(x)
+        # AG → FFN → RS
+        x = tensor_model_parallel_all_gather(x, dim=0)
+        x = self.ffn(x, input_ids)
+        x = tensor_model_parallel_reduce_scatter(x, dim=0)
+        return x, residual, post_mix, res_mix
+
 
 class DeepseekV4Model(nn.Module, EagleModelMixin):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
@@ -964,6 +1030,7 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
         self.config = config
+        self.parallel_config = vllm_config.parallel_config
         self.use_mega_moe = (
             vllm_config.kernel_config.moe_backend == "deep_gemm_mega_moe"
         )
@@ -1087,6 +1154,11 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             else:
                 hidden_states = self.embed_input_ids(input_ids)
             hidden_states = hidden_states.unsqueeze(-2).repeat(1, self.hc_mult, 1)
+            # Eager SP: chunk along sequence dim after embedding
+            if self.parallel_config.use_sequence_parallel:
+                hidden_states = sequence_parallel_chunk(
+                    hidden_states.view(-1, hidden_states.shape[-1])
+                ).view(-1, self.hc_mult, self.config.hidden_size)
         else:
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
