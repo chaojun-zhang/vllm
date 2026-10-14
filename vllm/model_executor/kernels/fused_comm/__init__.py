@@ -55,11 +55,50 @@ def _init_unquantized_fused_kernel(
     return UnquantizedAllGatherGemm(linear)
 
 
+def _init_fp8_fused_kernel(
+    linear: ColumnParallelLinear | RowParallelLinear,
+) -> LinearCommKernel | None:
+    from vllm.model_executor.kernels.fused_comm.fp8 import (
+        POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+
+    return _try_fused_kernels(
+        linear,
+        POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+
+
+def _init_mxfp8_fused_kernel(
+    linear: ColumnParallelLinear | RowParallelLinear,
+) -> LinearCommKernel | None:
+    from vllm.model_executor.kernels.fused_comm.fp8 import (
+        POSSIBLE_MXFP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_MXFP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+    from vllm.model_executor.layers.quantization.online.mxfp8 import (
+        Mxfp8OnlineLinearMethod,
+    )
+
+    if not isinstance(linear.quant_method, Mxfp8OnlineLinearMethod):
+        return None
+    return _try_fused_kernels(
+        linear,
+        POSSIBLE_MXFP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_MXFP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+
+
 def init_fused_comm_kernel(
     linear: ColumnParallelLinear | RowParallelLinear,
 ) -> LinearCommKernel | None:
     """Return a fused (symmetric-memory) comm+GEMM kernel, or ``None``."""
-    for init_kernel_fn in (_init_unquantized_fused_kernel,):
+    for init_kernel_fn in (
+        _init_unquantized_fused_kernel,
+        _init_fp8_fused_kernel,
+        _init_mxfp8_fused_kernel,
+    ):
         kernel = init_kernel_fn(linear)
         if kernel is not None:
             return kernel
@@ -73,7 +112,13 @@ def init_unfused_comm_kernel(
     """Return a comm+GEMM kernel built on plain collectives."""
     if isinstance(linear, RowParallelLinear):
         return UnfusedGemmReduceScatterKernel(linear)
-    return UnfusedAllGatherGemmKernel(linear)
+
+    from vllm.model_executor.kernels.fused_comm.fp8.unfused import (
+        UnfusedBlockScaledMMAllGather,
+    )
+
+    kernel = _try_kernels(linear, [UnfusedBlockScaledMMAllGather])
+    return kernel or UnfusedAllGatherGemmKernel(linear)
 
 
 __all__ = [
