@@ -9,7 +9,7 @@ from vllm.model_executor.kernels.fused_comm.base import (
     FusedAllGatherGemmKernel,
     FusedGemmReduceScatterKernel,
 )
-from vllm.model_executor.kernels.fused_comm.fp8 import cutlass, flashinfer, triton
+from vllm.model_executor.kernels.fused_comm.fp8 import cutlass, flashinfer, pytorch, triton
 from vllm.model_executor.kernels.fused_comm.fp8.utils import resolve_fp8_linear_kernel
 from vllm.platforms import PlatformEnum
 
@@ -21,6 +21,12 @@ POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS: dict[
         cutlass.CutlassAllGatherScaledMM,
         cutlass.CutlassAllGatherBlockScaledMM,
         triton.TritonAllGatherBlockScaledMM,
+        pytorch.TorchAllGatherScaledMM,
+        pytorch.TorchAllGatherBlockScaledMM,
+    ],
+    PlatformEnum.ROCM: [
+        pytorch.TorchAllGatherScaledMM,
+        pytorch.TorchAllGatherBlockScaledMM,
     ],
 }
 
@@ -32,6 +38,12 @@ POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS: dict[
         cutlass.CutlassScaledMMReduceScatter,
         cutlass.CutlassBlockScaledMMReduceScatter,
         triton.TritonBlockScaledMMReduceScatter,
+        pytorch.TorchScaledMMReduceScatter,
+        pytorch.TorchBlockScaledMMReduceScatter,
+    ],
+    PlatformEnum.ROCM: [
+        pytorch.TorchScaledMMReduceScatter,
+        pytorch.TorchBlockScaledMMReduceScatter,
     ],
 }
 
