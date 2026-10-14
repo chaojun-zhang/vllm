@@ -9,13 +9,25 @@ from vllm.model_executor.kernels.fused_comm.base import (
     FusedAllGatherGemmKernel,
     FusedGemmReduceScatterKernel,
 )
-from vllm.model_executor.kernels.fused_comm.fp8 import cutlass, flashinfer, pytorch, triton
+from vllm.model_executor.kernels.fused_comm.fp8 import (
+    cutlass,
+    flashinfer,
+    pytorch,
+    triton,
+    xpu,
+)
 from vllm.model_executor.kernels.fused_comm.fp8.utils import resolve_fp8_linear_kernel
 from vllm.platforms import PlatformEnum
 
 POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS: dict[
     PlatformEnum, list[type[FusedAllGatherGemmKernel]]
 ] = {
+    PlatformEnum.XPU: [
+        xpu.XPUAllGatherScaledMM,
+        xpu.XPUAllGatherBlockScaledMM,
+        pytorch.TorchAllGatherScaledMM,
+        pytorch.TorchAllGatherBlockScaledMM,
+    ],
     PlatformEnum.CUDA: [
         flashinfer.FlashInferAllGatherScaledMM,
         cutlass.CutlassAllGatherScaledMM,
@@ -33,6 +45,12 @@ POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS: dict[
 POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS: dict[
     PlatformEnum, list[type[FusedGemmReduceScatterKernel]]
 ] = {
+    PlatformEnum.XPU: [
+        xpu.XPUScaledMMReduceScatter,
+        xpu.XPUBlockScaledMMReduceScatter,
+        pytorch.TorchScaledMMReduceScatter,
+        pytorch.TorchBlockScaledMMReduceScatter,
+    ],
     PlatformEnum.CUDA: [
         flashinfer.FlashInferScaledMMReduceScatter,
         cutlass.CutlassScaledMMReduceScatter,
@@ -47,8 +65,23 @@ POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS: dict[
     ],
 }
 
+POSSIBLE_MXFP8_ALL_GATHER_GEMM_KERNELS: dict[
+    PlatformEnum, list[type[FusedAllGatherGemmKernel]]
+] = {
+    PlatformEnum.XPU: [xpu.XPUAllGatherMXFP8],
+}
+
+POSSIBLE_MXFP8_GEMM_REDUCE_SCATTER_KERNELS: dict[
+    PlatformEnum, list[type[FusedGemmReduceScatterKernel]]
+] = {
+    PlatformEnum.XPU: [xpu.XPUMXFP8ReduceScatter],
+}
+
+
 __all__ = [
     "POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS",
     "POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS",
+    "POSSIBLE_MXFP8_ALL_GATHER_GEMM_KERNELS",
+    "POSSIBLE_MXFP8_GEMM_REDUCE_SCATTER_KERNELS",
     "resolve_fp8_linear_kernel",
 ]
