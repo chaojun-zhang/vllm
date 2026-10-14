@@ -16,9 +16,10 @@ class UnfusedBlockScaledMMAllGather(FusedAllGatherGemmKernel):
     """All-gathers the quantized activation (not the raw input) via plain
     collectives, then a plain ``apply_block_scaled_mm``.
 
-    # TODO: only validated on XPU. On CUDA the gathered activation scale
-    # loses the column-major (and padded/ue8m0) layout that the block
-    # kernels' QuantFP8 produces.
+    ``sp_all_gather`` concatenates each rank's shard into a fresh
+    contiguous tensor, so a column-major activation scale (as produced by
+    e.g. the CUTLASS and DeepGEMM block kernels' ``QuantFP8``) loses its
+    layout in the process; it is rebuilt below when required.
     """
 
     def __init__(self, layer: LinearBase) -> None:
@@ -57,6 +58,8 @@ class UnfusedBlockScaledMMAllGather(FusedAllGatherGemmKernel):
         )
         x_q_full = sp_all_gather(x_q)
         x_scale_full = sp_all_gather(x_scale)
+        if fp8_kernel.quant_fp8.column_major_scales:
+            x_scale_full = x_scale_full.t().contiguous().t()
 
         output = fp8_kernel.apply_block_scaled_mm(
             A=x_q_full, B=params.weight, As=x_scale_full, Bs=params.block_scale
