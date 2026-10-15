@@ -40,7 +40,7 @@ def _try_fused_kernels(
     return _try_kernels(linear, list(kernels.get(current_platform._enum, [])))
 
 
-def _init_unquantized_fused_kernel(
+def _init_base_fused_kernel(
     linear: ColumnParallelLinear | RowParallelLinear,
 ) -> LinearCommKernel | None:
     if type(linear.quant_method) is not UnquantizedLinearMethod:
@@ -55,11 +55,29 @@ def _init_unquantized_fused_kernel(
     return FusedAllGatherGemm(linear)
 
 
+def _init_fp8_fused_kernel(
+    linear: ColumnParallelLinear | RowParallelLinear,
+) -> LinearCommKernel | None:
+    from vllm.model_executor.kernels.sequence_parallel.fp8 import (
+        POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+
+    return _try_fused_kernels(
+        linear,
+        POSSIBLE_FP8_ALL_GATHER_GEMM_KERNELS,
+        POSSIBLE_FP8_GEMM_REDUCE_SCATTER_KERNELS,
+    )
+
+
 def init_fused_comm_kernel(
     linear: ColumnParallelLinear | RowParallelLinear,
 ) -> LinearCommKernel | None:
     """Return a fused (symmetric-memory) comm+GEMM kernel, or ``None``."""
-    for init_kernel_fn in (_init_unquantized_fused_kernel,):
+    for init_kernel_fn in (
+        _init_base_fused_kernel,
+        _init_fp8_fused_kernel,
+    ):
         kernel = init_kernel_fn(linear)
         if kernel is not None:
             return kernel
@@ -73,8 +91,14 @@ def init_unfused_comm_kernel(
     """Return a comm+GEMM kernel built on plain collectives."""
     if isinstance(linear, RowParallelLinear):
         return UnfusedGemmReduceScatter(linear)
+
+    from vllm.model_executor.kernels.sequence_parallel.fp8.unfused import (
+        UnfusedBlockScaledMMAllGather,
+    )
+
     if isinstance(linear, ColumnParallelLinear):
-        return UnfusedAllGatherGemm(linear)
+        kernel = _try_kernels(linear, [UnfusedBlockScaledMMAllGather])
+        return kernel or UnfusedAllGatherGemm(linear)
     raise TypeError(
         f"init_unfused_comm_kernel: expected ColumnParallelLinear or "
         f"RowParallelLinear, got {type(linear).__name__}."
