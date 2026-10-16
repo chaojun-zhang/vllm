@@ -159,6 +159,10 @@ Ensure the PR description has a short 1-2 line summary of the changes to facilit
 
 Keep Claims to a few concrete bullets and explain motivation briefly. Keep explanations in Validation and Details concise too, while retaining the evidence, root cause, tradeoffs, and limitations needed to assess the change. Link full logs or use collapsible HTML details for lengthy supporting material rather than polluting the main narrative.
 
+Keep the whole PR body as short as the change allows — a few sentences/bullets per section is normal; a one-line Overview and one-line Validation command is fine for small or mechanical changes (e.g. a CI config tweak). Do not restate the diff, narrate every step taken to produce it, or pad sections to look thorough. Write plainly and directly: avoid stock AI phrasing (e.g. "This PR introduces...", "It's worth noting that...", excessive bolding/hedging, filler transitions, or restating the same point across Overview/Claims/Details). Cut anything a reviewer wouldn't need to approve the change.
+
+When creating or editing a PR description with `gh pr create`/`gh pr edit`, write it to a file and pass it with `--body-file <path>` rather than an inline `--body` string or a heredoc piped to `--body-file -`; inline strings and some heredoc/stdin paths can collapse intended line breaks into literal `\n` sequences or merge blank lines, breaking Markdown rendering (headers glued to text, list items merged, code fences not closing). After submitting, fetch the body back (e.g. `gh pr view <num> --json body -q .body`) and confirm blank lines between headers, lists, and code fences are preserved as written. If an edit silently fails to apply (e.g. due to an unrelated API error), re-verify the live body rather than assuming the edit succeeded.
+
 #### 4.2: Claims and Supporting Evidence
 
 Ensure the PR makes clear, concise claims about the accomplishment:
