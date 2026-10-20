@@ -95,6 +95,10 @@ async def test_load(
         pytest.skip(
             "Ray as the distributed executor backend is not supported with ROCm."
         )
+    elif data_parallel_backend == "ray" and current_platform.is_xpu():
+        pytest.skip(
+            "Ray as the distributed executor backend is not supported with XPU."
+        )
     stats_loggers = {}
 
     @dataclass
