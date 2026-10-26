@@ -244,3 +244,15 @@ def test_local_file_model_skips_speculators_detection(tmp_path):
     assert maybe_override_with_speculators(
         model=str(gguf), tokenizer="org/tok", trust_remote_code=False
     ) == (str(gguf), "org/tok", None)
+
+
+def test_remote_gguf_ref_skips_speculators_detection():
+    """`repo_id:quant_type` is not a valid repo id for config lookup."""
+    model = "org/model-GGUF:Q8_0"
+    with patch(
+        "vllm.transformers_utils.config.PreTrainedConfig.get_config_dict"
+    ) as get_config_dict:
+        assert maybe_override_with_speculators(
+            model=model, tokenizer=None, trust_remote_code=False
+        ) == (model, None, None)
+    get_config_dict.assert_not_called()

@@ -797,6 +797,17 @@ def _maybe_remap_hf_config_attrs(config: PreTrainedConfig) -> PreTrainedConfig:
     return config
 
 
+def _is_remote_gguf_ref(model: str) -> bool:
+    repo_id, sep, quant_type = model.rpartition(":")
+    if not sep or not quant_type or os.path.isdir(model):
+        return False
+    try:
+        validate_repo_id(repo_id)
+    except HFValidationError:
+        return False
+    return True
+
+
 def maybe_override_with_speculators(
     model: str,
     tokenizer: str | None,
@@ -823,8 +834,9 @@ def maybe_override_with_speculators(
         Tuple of (resolved_model, resolved_tokenizer, speculative_config)
 
     """
-    # A single local file (e.g. a .gguf checkpoint) has no speculators config.
-    if os.path.isfile(model):
+    # A single local file or a remote GGUF reference (`repo_id:quant_type`)
+    # has no speculators config.
+    if os.path.isfile(model) or _is_remote_gguf_ref(model):
         return model, tokenizer, vllm_speculative_config
 
     kwargs["local_files_only"] = huggingface_hub.constants.HF_HUB_OFFLINE
