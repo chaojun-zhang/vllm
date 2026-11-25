@@ -189,14 +189,19 @@ steps:
   source_file_dependencies:
     - vllm/
     - vllm/v1/kv_offload/
+    - vllm/v1/simple_kv_offload/
     - tests/v1/kv_offload/
+    - tests/v1/simple_kv_offload/
     - tests/v1/kv_connector/unit/test_offloading_connector.py
   commands:
     - >-
       bash .buildkite/scripts/hardware_ci/run-intel-test.sh
-      'export VLLM_WORKER_MULTIPROC_METHOD=spawn &&
+      'pip install --no-deps
+      "kvcr @ git+https://github.com/ai-dynamo/kvcr.git@5ce23b1527725cf623a3fc7feb94dc6d3d5fafaa" &&
+      export VLLM_WORKER_MULTIPROC_METHOD=spawn &&
       cd tests &&
       pytest -v -s v1/kv_offload &&
+      pytest -v -s v1/simple_kv_offload &&
       pytest -v -s v1/kv_connector/unit/test_offloading_connector.py'
 
 - label: ":intel: (BMG) NixlConnector PD accuracy (4 GPUs)"
