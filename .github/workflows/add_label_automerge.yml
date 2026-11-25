@@ -1,0 +1,14 @@
+name: Add label on auto-merge enabled
+
+permissions:
+  pull-requests: write
+
+on:
+  pull_request_target:
+    types:
+      - auto_merge_enabled
+
+jobs:
+  add-label-on-auto-merge:
+    if: github.repository_owner == 'vllm-project'
+    uses: vllm-project/vllm/.github/workflows/_reusable-add-label-automerge.yml@main

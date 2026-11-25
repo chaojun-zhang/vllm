@@ -1,0 +1,51 @@
+name: pre-commit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  run:
+    if: github.repository_owner == 'vllm-project'
+    uses: vllm-project/vllm/.github/workflows/_reusable-pre-commit.yml@main
+
+  pre-run-check:
+    needs: run
+    if: >-
+      ${{ always() && !cancelled() &&
+      github.repository_owner == 'vllm-project' &&
+      github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Propagate pre-run-check result
+        env:
+          RESULT: ${{ needs.run.outputs.pre-run-check-result }}
+        run: |
+          echo "pre-run-check result: ${RESULT:-failure}"
+          test "$RESULT" = "success"
+
+  pre-commit:
+    needs: run
+    if: >-
+      ${{ always() && !cancelled() &&
+      github.repository_owner == 'vllm-project' &&
+      (needs.run.outputs.pre-run-check-result == 'success' ||
+      github.event_name == 'push') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Propagate pre-commit result
+        env:
+          RESULT: ${{ needs.run.outputs.pre-commit-result }}
+        run: |
+          echo "pre-commit result: ${RESULT:-failure}"
+          test "$RESULT" = "success"

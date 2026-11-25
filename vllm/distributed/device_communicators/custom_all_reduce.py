@@ -1,258 +1,776 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from contextlib import contextmanager
-from typing import Optional
+from typing import Literal, cast
 
 import torch
 import torch.distributed as dist
+from torch.distributed import ProcessGroup
 
+import vllm.envs as envs
+from vllm import _custom_ops as ops
+from vllm.distributed.device_communicators.all_reduce_utils import (
+    CUSTOM_ALL_REDUCE_MAX_SIZES,
+    gpu_p2p_access_check,
+)
+from vllm.distributed.device_communicators.nvlink_fabric import (
+    SymmetricMemoryTopology,
+    get_symmetric_memory_topology,
+)
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 
 try:
-    import pynvml
+    ops.meta_size()
+    custom_ar = True
+except Exception:
+    # For CPUs
+    custom_ar = False
 
-    from vllm._C import custom_ar
+try:
+    import torch.distributed._symmetric_memory as torch_symm_mem
 except ImportError:
-    # For AMD GPUs
-    custom_ar = None
-    pynvml = None
+    torch_symm_mem = None
 
 logger = init_logger(__name__)
 
-_CA_HANDLE = None
-_IS_CAPTURING = False
-_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8]
+_ReduceScatterBackend = Literal["legacy", "mnnvl_lamport", "mnnvl_multimem"]
+_MNNVL_MULTIMEM_REDUCE_SCATTER_WORLD_SIZES = (2, 4, 8)
 
 
-def init_custom_ar() -> None:
-    from vllm.distributed import (get_tensor_model_parallel_rank,
-                                  get_tensor_model_parallel_world_size)
-
-    global _CA_HANDLE
-    if _CA_HANDLE is not None:
-        return
-    rank = get_tensor_model_parallel_rank()
-    world_size = get_tensor_model_parallel_world_size()
-    if world_size == 1:
-        # No need to initialize custom allreduce for single GPU case.
-        return
-
-    if world_size not in _SUPPORTED_WORLD_SIZES:
-        logger.warn(
-            "Custom allreduce is disabled due to an unsupported world size: "
-            "%d. Supported world sizes: %s. To silence this warning, specify"
-            " disable_custom_all_reduce=True explicitly.", world_size,
-            str(_SUPPORTED_WORLD_SIZES))
-        return
-    num_dev = torch.cuda.device_count()
-    # note: num dev can be larger than world_size if we're only using
-    # first few GPUs
-    if num_dev < world_size:
-        logger.warn(
-            "Cannot test GPU P2P because not all GPUs are visible to the "
-            "current process. This might be the case if 'CUDA_VISIBLE_DEVICES'"
-            " is set.")
+def _has_local_multicast_support(device: torch.device) -> bool:
+    """Return whether this CUDA device can allocate multicast memory."""
+    if torch_symm_mem is None or not current_platform.is_cuda():
         return False
-    # test nvlink first, this will filter out most of the cases
-    # where custom allreduce is not supported
-    full_nvlink = _is_full_nvlink(rank, world_size)
-    if world_size > 2 and not full_nvlink:
-        logger.warn(
-            "Custom allreduce is disabled because it's not supported on more"
-            " than two PCIe-only GPUs. To silence this warning, specify"
-            " disable_custom_all_reduce=True explicitly.")
-        return
-    # test P2P capability
-    # this is expensive to compute at the first time
-    # then we cache the result
-    if not _can_p2p(rank, world_size):
-        logger.warn(
-            "Custom allreduce is disabled because your platform lacks GPU P2P"
-            " capability or P2P test failed. To silence this warning, specify"
-            " disable_custom_all_reduce=True explicitly.")
-        return
-    _CA_HANDLE = CustomAllreduce(rank, world_size, full_nvlink)
+    if device.index is None:
+        return False
 
-
-def begin_capture() -> None:
-    global _IS_CAPTURING
-    _IS_CAPTURING = True
-
-
-def end_capture() -> None:
-    global _IS_CAPTURING
-    _IS_CAPTURING = False
-
-
-def is_capturing() -> bool:
-    return _IS_CAPTURING and _CA_HANDLE is not None
-
-
-def get_handle() -> Optional["CustomAllreduce"]:
-    return _CA_HANDLE
-
-
-def is_initialized() -> bool:
-    return _CA_HANDLE is not None
-
-
-@contextmanager
-def capture():
     try:
-        begin_capture()
-        yield
-    finally:
-        end_capture()
-        handle = get_handle()
-        if handle is not None:
-            handle.register_graph_buffers()
+        from torch._C._autograd import DeviceType
+        from torch._C._distributed_c10d import _SymmetricMemory
+
+        return _SymmetricMemory.has_multicast_support(
+            DeviceType.CUDA,
+            device.index,
+        )
+    except Exception as error:
+        logger.debug("MNNVL capability probe failed: %s", error)
+        return False
 
 
-def custom_all_reduce(input: torch.Tensor) -> Optional[torch.Tensor]:
-    ca_handle = get_handle()
-    # when custom allreduce is disabled, this will be None
-    if ca_handle is None:
-        return
-    if is_capturing():
-        if torch.cuda.is_current_stream_capturing():
-            if ca_handle.should_custom_ar(input):
-                return ca_handle.all_reduce_reg(input)
-        else:
-            if ca_handle.should_custom_ar(input):
-                # if warm up, mimic the allocation pattern
-                # since custom allreduce is out-of-place
-                return torch.empty_like(input)
-    else:
-        # note: outside of cuda graph context,
-        # custom allreduce incurs a cost of cudaMemcpy, which should
-        # be small(<=1% of overall latency) compared to the performance
-        # gains of using custom kernels
-        if ca_handle.should_custom_ar(input):
-            return ca_handle.all_reduce_unreg(input)
+def _all_ranks_true(group: ProcessGroup, local_value: bool) -> bool:
+    group_value = torch.tensor(int(local_value), dtype=torch.int32, device="cpu")
+    dist.all_reduce(group_value, op=dist.ReduceOp.MIN, group=group)
+    return bool(group_value.item())
 
 
-@contextmanager
-def _nvml():
-    try:
-        pynvml.nvmlInit()
-        yield
-    finally:
-        pynvml.nvmlShutdown()
+def _group_can_attempt_mnnvl(
+    group: ProcessGroup,
+    device: torch.device,
+) -> bool:
+    """Return whether every rank can enter the cross-node MNNVL path.
 
-
-# query if the set of gpus are fully connected by nvlink (1 hop)
-@_nvml()
-def _is_full_nvlink(rank, world_size):
-    handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
-    for i in range(world_size):
-        if i != rank:
-            try:
-                link_state = pynvml.nvmlDeviceGetNvLinkState(handle, i)
-                if not link_state:
-                    return False
-            except pynvml.NVMLError as error:
-                logger.info(
-                    f"NVLink detection failed with message \"{str(error)}\". "
-                    "This is normal if your machine has no NVLink equipped")
-                return False
-    return True
+    MNNVL is available only on Blackwell-class GPUs. Local multicast support
+    is necessary but does not establish that the process group spans an MNNVL
+    domain; the caller performs that group-level topology check before this
+    local capability probe. The CPU all-reduce keeps every rank on the same
+    control-flow path for heterogeneous or partially configured groups.
+    """
+    device_index = device.index
+    local_support = (
+        device_index is not None
+        and current_platform.has_device_capability(100, device_index)
+        and _has_local_multicast_support(device)
+    )
+    return _all_ranks_true(group, local_support)
 
 
 def _can_p2p(rank: int, world_size: int) -> bool:
-    from vllm.distributed.utils import gpu_p2p_access_check
     for i in range(world_size):
         if i == rank:
             continue
+        if envs.VLLM_SKIP_P2P_CHECK:
+            logger.debug("Skipping P2P check and trusting the driver's P2P report.")
+            # can_device_access_peer takes visible device ordinals, while
+            # rank and i are logical local IDs.
+            return torch.cuda.can_device_access_peer(
+                current_platform.logical_device_id_to_visible_device_id(rank),
+                current_platform.logical_device_id_to_visible_device_id(i),
+            )
         if not gpu_p2p_access_check(rank, i):
             return False
     return True
 
 
+def _supports_mnnvl_multimem_reduce_scatter(
+    device: torch.device, world_size: int
+) -> bool:
+    return (
+        world_size in _MNNVL_MULTIMEM_REDUCE_SCATTER_WORLD_SIZES
+        and device.index is not None
+        and current_platform.is_device_capability_family(100, device.index)
+        and _has_local_multicast_support(device)
+    )
+
+
+from vllm.distributed.utils import is_weak_contiguous  # noqa: E402
+
+
 class CustomAllreduce:
+    _SUPPORTED_WORLD_SIZES = [2, 4, 6, 8, 16]
+    batch_invariant = False
+    _DEFAULT_ALL_GATHER_MAX_SIZE = 2 * 1024 * 1024
+    _DEFAULT_MNNVL_ALL_GATHER_MAX_SIZES = {
+        2: 8 * 1024 * 1024,
+        4: 4 * 1024 * 1024,
+        6: 2 * 1024 * 1024,
+        8: 2 * 1024 * 1024,
+        16: 2 * 1024 * 1024,
+    }
+    _DEFAULT_REDUCE_SCATTER_MAX_SIZE = 16 * 1024 * 1024
+    _DEFAULT_MNNVL_REDUCE_SCATTER_MAX_SIZE = 16 * 1024 * 1024
+    _DEFAULT_MNNVL_MULTIMEM_REDUCE_SCATTER_MAX_SIZE = 64 * 1024 * 1024
+    _MNNVL_MULTIMEM_REDUCE_SCATTER_BLOCKS = 8
 
     # max_size: max supported allreduce size
-    def __init__(self,
-                 rank,
-                 world_size,
-                 full_nvlink,
-                 max_size=8192 * 1024) -> None:
-        # buffers memory are owned by this Python class and passed to C++
-        # meta data composes of two parts: meta data for synchronization
-        # (256 bytes) and a temporary buffer for storing intermediate
-        # allreduce results.
-        self.meta = torch.zeros(custom_ar.meta_size() + max_size,
-                                dtype=torch.uint8,
-                                device="cuda")
-        # This is a pre-registered IPC buffer. In eager mode, input tensors
-        # are first copied into this buffer before allreduce is performed
-        self.buffer = torch.empty(max_size, dtype=torch.uint8, device="cuda")
-        # This is a buffer for storing the tuples of pointers pointing to
-        # IPC buffers from all ranks. Each registered tuple has size of
-        # 8*world_size bytes where world_size is at most 8. Allocating 8MB
-        # is enough for 131072 such tuples. The largest model I've seen only
-        # needs less than 10000 of registered tuples.
-        self.rank_data = torch.empty(8 * 1024 * 1024,
-                                     dtype=torch.uint8,
-                                     device="cuda")
-        self.max_size = max_size
-        self.world_size = world_size
-        handles, offsets = self._get_ipc_meta(self.meta)
-        self.full_nvlink = full_nvlink
-        self._ptr = custom_ar.init_custom_ar(self.meta, self.rank_data,
-                                             handles, offsets, rank,
-                                             self.full_nvlink)
-        self.register_buffer(self.buffer)
+    def __init__(
+        self,
+        group: ProcessGroup,
+        device: int | str | torch.device,
+        max_size=8192 * 1024,
+        max_all_gather_size=_DEFAULT_ALL_GATHER_MAX_SIZE,
+        max_mnnvl_all_gather_size=None,
+        max_reduce_scatter_size=_DEFAULT_REDUCE_SCATTER_MAX_SIZE,
+        max_mnnvl_reduce_scatter_size=_DEFAULT_MNNVL_REDUCE_SCATTER_MAX_SIZE,
+        max_mnnvl_multimem_reduce_scatter_size=(
+            _DEFAULT_MNNVL_MULTIMEM_REDUCE_SCATTER_MAX_SIZE
+        ),
+        symm_mem_enabled=False,
+        *,
+        register_graph_buffers: bool = True,
+    ) -> None:
+        """Args:
+            group: the process group to work on. If None, it will use the
+                default process group.
+            device: the device to bind the CustomAllreduce to. If None,
+                it will be bound to f"cuda:{local_rank}".
+            register_graph_buffers: whether graph capture IPC-registers its buffers.
+        It is the caller's responsibility to make sure each communicator
+        is bound to a unique device. CUDA IPC collectives require all ranks
+        to be on the same node; cross-node groups only support MNNVL
+        all-gather and reduce-scatter.
 
-    def _get_ipc_meta(self, inp: torch.Tensor):
-        data = inp.untyped_storage()._share_cuda_()
-        shard_data = (
-            data[1],  # ipc handle to base ptr
-            data[3],  # offset of base ptr
+        """
+        self._IS_CAPTURING = False
+        self._capture_registered = register_graph_buffers
+        self._ptr = 0
+        self.disabled = True
+        self.mnnvl_buffer = None
+        self.mnnvl_handle = None
+        self.mnnvl_peer_buffers: list[torch.Tensor] | None = None
+        self.mnnvl_multicast_ptr = 0
+        self.mnnvl_buffer_size = 0
+        self.mnnvl_lamport_ag_local_ptr = 0
+        self.mnnvl_lamport_ag_multicast_ptr = 0
+        self.mnnvl_lamport_rs_local_ptr = 0
+        self.mnnvl_lamport_epochs = None
+        self.mnnvl_lamport_ag_epoch_ptr = 0
+        self.mnnvl_lamport_rs_epoch_ptr = 0
+        self.mnnvl_multimem_rs_supported = False
+        self.mnnvl_multimem_rs_initialized = False
+        self.mnnvl_multimem_rs_buffer = None
+        self.mnnvl_multimem_rs_handle = None
+        self.mnnvl_multimem_rs_buffer_size = 0
+        self.mnnvl_multimem_rs_local_ptr = 0
+        self.mnnvl_multimem_rs_multicast_ptr = 0
+        self.mnnvl_only = False
+        self.batch_invariant = envs.VLLM_BATCH_INVARIANT
+
+        if not custom_ar:
+            # disable because of missing custom allreduce library
+            # e.g. in a non-GPU environment
+            logger.info_once(
+                "Custom allreduce is disabled because "
+                "of missing custom allreduce library"
+            )
+            return
+
+        self.group = group
+
+        assert dist.get_backend(group) != dist.Backend.NCCL, (
+            "CustomAllreduce should be attached to a non-NCCL group."
         )
-        return self._gather_ipc_meta(shard_data)
 
-    def _gather_ipc_meta(self, shard_data):
-        all_data = [None] * self.world_size
-        dist.all_gather_object(all_data, shard_data)
+        topology = get_symmetric_memory_topology(group)
+        same_node = topology is SymmetricMemoryTopology.INTRA_NODE
+        self.mnnvl_only = not same_node
 
-        handles = []
-        offsets = []
-        for i in range(len(all_data)):
-            handles.append(all_data[i][0])
-            offsets.append(all_data[i][1])
-        return handles, offsets
+        rank = dist.get_rank(group=self.group)
+        self.rank = rank
+        world_size = dist.get_world_size(group=self.group)
+        if world_size == 1:
+            # No need to initialize custom allreduce for single GPU case.
+            return
 
-    def register_buffer(self, inp: torch.Tensor):
-        handles, offsets = self._get_ipc_meta(inp)
-        custom_ar.register_buffer(self._ptr, inp, handles, offsets)
+        if world_size not in CustomAllreduce._SUPPORTED_WORLD_SIZES:
+            logger.warning_once(
+                "Custom allreduce is disabled due to an unsupported world"
+                " size: %d. Supported world sizes: %s. To silence this "
+                "warning, specify disable_custom_all_reduce=True explicitly.",
+                world_size,
+                str(CustomAllreduce._SUPPORTED_WORLD_SIZES),
+            )
+            return
+
+        if topology is SymmetricMemoryTopology.UNSUPPORTED:
+            logger.warning(
+                "Custom collectives are disabled because this multi-node "
+                "group does not share an NVLink fabric."
+            )
+            return
+
+        if isinstance(device, int):
+            device = torch.device(f"cuda:{device}")
+        elif isinstance(device, str):
+            device = torch.device(device)
+        # now `device` is a `torch.device` object
+        assert isinstance(device, torch.device)
+        self.device = device
+        mnnvl_multimem_rs_supported = _supports_mnnvl_multimem_reduce_scatter(
+            device, world_size
+        )
+        if not same_node and not _group_can_attempt_mnnvl(group, device):
+            logger.warning(
+                "Custom collectives are disabled because this multi-node "
+                "group does not have MNNVL-capable GPUs on every rank."
+            )
+            return
+        device_capability = current_platform.get_device_capability()
+        if (
+            current_platform.is_cuda()
+            and symm_mem_enabled
+            and device_capability is not None
+        ):
+            device_capability_str = device_capability.as_version_str()
+            if (
+                device_capability_str in CUSTOM_ALL_REDUCE_MAX_SIZES
+                and world_size in CUSTOM_ALL_REDUCE_MAX_SIZES[device_capability_str]
+            ):
+                max_size = min(
+                    CUSTOM_ALL_REDUCE_MAX_SIZES[device_capability_str][world_size],
+                    max_size,
+                )
+        # device.index is a visible ordinal, not a logical local ID.
+        fully_connected = False
+        if same_node:
+            physical_device_id = (
+                current_platform.visible_device_id_to_physical_device_id(device.index)
+            )
+            tensor = torch.tensor([physical_device_id], dtype=torch.int, device="cpu")
+            gather_list = [
+                torch.tensor([0], dtype=torch.int, device="cpu")
+                for _ in range(world_size)
+            ]
+            dist.all_gather(gather_list, tensor, group=self.group)
+            physical_device_ids = [t.item() for t in gather_list]
+            assert current_platform.is_cuda_alike()
+            fully_connected = current_platform.is_fully_connected(physical_device_ids)
+        if same_node and world_size > 2 and not fully_connected:
+            logger.warning(
+                "Custom allreduce is disabled because it's not supported on"
+                " more than two PCIe-only GPUs. To silence this warning, "
+                "specify disable_custom_all_reduce=True explicitly."
+            )
+            return
+        # test P2P capability, this checks software/cudaruntime support
+        # this is expensive to compute at the first time
+        # then we cache the result
+        # On AMD GPU, p2p is always enabled between XGMI connected GPUs
+        if (
+            same_node
+            and not current_platform.is_rocm()
+            and not _can_p2p(rank, world_size)
+        ):
+            logger.warning(
+                "Custom allreduce is disabled because your platform lacks "
+                "GPU P2P capability or P2P test failed. To silence this "
+                "warning, specify disable_custom_all_reduce=True explicitly."
+            )
+            return
+
+        self.disabled = False
+        # Buffers memory are owned by this Python class and passed to C++.
+        # Metadata composes of two parts: metadata for synchronization and a
+        # temporary buffer for storing intermediate allreduce results.
+        if same_node:
+            self.meta_ptrs = self.create_shared_buffer(
+                ops.meta_size() + max_size, group=group, uncached=True
+            )
+        else:
+            meta_ptr, _ = ops.allocate_shared_buffer_and_handle(ops.meta_size())
+            self.meta_ptrs = [meta_ptr] * world_size
+        # This is a pre-registered IPC buffer. In eager mode, input tensors
+        # are first copied into this buffer before the operation is performed
+        legacy_buffer_size = max(max_size, max_all_gather_size, max_reduce_scatter_size)
+        if same_node:
+            self.buffer_ptrs = self.create_shared_buffer(
+                legacy_buffer_size,
+                group=group,
+            )
+        else:
+            buffer_ptr, _ = ops.allocate_shared_buffer_and_handle(legacy_buffer_size)
+            self.buffer_ptrs = [buffer_ptr] * world_size
+        # This stores tuples of pointers to IPC buffers from all ranks.
+        # Each registered tuple contains at most 16 addresses.
+        # Allocating 8MB is enough for 65536 such tuples. The largest model uses
+        # fewer than 10000 registered tuples.
+        self.rank_data = torch.empty(
+            8 * 1024 * 1024, dtype=torch.uint8, device=self.device
+        )
+        self.max_size = max_size
+        self.max_all_gather_size = max_all_gather_size
+        if max_mnnvl_all_gather_size is None:
+            max_mnnvl_all_gather_size = self._DEFAULT_MNNVL_ALL_GATHER_MAX_SIZES[
+                world_size
+            ]
+        self.max_mnnvl_all_gather_size = max_mnnvl_all_gather_size
+        self.max_reduce_scatter_size = max_reduce_scatter_size
+        self.max_mnnvl_reduce_scatter_size = max_mnnvl_reduce_scatter_size
+        self.max_mnnvl_multimem_reduce_scatter_size = (
+            max_mnnvl_multimem_reduce_scatter_size
+        )
+        self.rank = rank
+        self.world_size = world_size
+        self.fully_connected = fully_connected
+        self._ptr = ops.init_custom_ar(
+            self.meta_ptrs, self.rank_data, rank, self.fully_connected
+        )
+        ops.register_buffer(self._ptr, self.buffer_ptrs)
+        self._init_mnnvl_buffer(
+            max(
+                max_mnnvl_all_gather_size * world_size,
+                max_mnnvl_reduce_scatter_size,
+            )
+        )
+        if world_size in _MNNVL_MULTIMEM_REDUCE_SCATTER_WORLD_SIZES:
+            self.mnnvl_multimem_rs_supported = _all_ranks_true(
+                self.group,
+                mnnvl_multimem_rs_supported and bool(self.mnnvl_multicast_ptr),
+            )
+        if not same_node and not self.mnnvl_multicast_ptr:
+            logger.warning(
+                "Custom collectives are disabled because this multi-node "
+                "group does not support MNNVL multicast."
+            )
+            self.close()
+            self.disabled = True
+
+    def _init_mnnvl_buffer(self, stage_size: int) -> None:
+        if torch_symm_mem is None or not current_platform.is_cuda():
+            return
+        try:
+            buffer_size = stage_size * 6
+            buffer = torch_symm_mem.empty(
+                buffer_size, dtype=torch.uint8, device=self.device
+            )
+            handle = torch_symm_mem.rendezvous(buffer, self.group.group_name)
+            if handle.multicast_ptr == 0:
+                return
+            peer_buffers = [
+                handle.get_buffer(
+                    peer,
+                    (buffer_size,),
+                    torch.uint8,
+                    storage_offset=0,
+                )
+                for peer in range(self.world_size)
+            ]
+            ptrs = [peer_buffer.data_ptr() for peer_buffer in peer_buffers]
+            lamport_ag_offset = 0
+            lamport_rs_offset = stage_size * 3
+            lamport_ag_ptrs = [ptr + lamport_ag_offset for ptr in ptrs]
+            lamport_rs_ptrs = [ptr + lamport_rs_offset for ptr in ptrs]
+            ops.register_buffer(self._ptr, lamport_ag_ptrs)
+            ops.register_buffer(self._ptr, lamport_rs_ptrs)
+
+            buffer.view(torch.int32).fill_(-2147483648)
+            epochs = torch.zeros(
+                (2, 32),
+                dtype=torch.int32,
+                device=self.device,
+            )
+            torch.accelerator.synchronize()
+            dist.barrier(group=self.group)
+
+            self.mnnvl_buffer = buffer
+            self.mnnvl_handle = handle
+            self.mnnvl_peer_buffers = peer_buffers
+            self.mnnvl_multicast_ptr = handle.multicast_ptr
+            self.mnnvl_buffer_size = stage_size
+            self.mnnvl_lamport_ag_local_ptr = lamport_ag_ptrs[self.rank]
+            self.mnnvl_lamport_ag_multicast_ptr = (
+                handle.multicast_ptr + lamport_ag_offset
+            )
+            self.mnnvl_lamport_rs_local_ptr = lamport_rs_ptrs[self.rank]
+            self.mnnvl_lamport_epochs = epochs
+            self.mnnvl_lamport_ag_epoch_ptr = epochs[0].data_ptr()
+            self.mnnvl_lamport_rs_epoch_ptr = epochs[1].data_ptr()
+        except RuntimeError as error:
+            logger.debug("MNNVL AG/RS initialization failed: %s", error)
+
+    def _init_mnnvl_multimem_reduce_scatter_buffer(self) -> None:
+        if self.mnnvl_multimem_rs_initialized:
+            return
+        self.mnnvl_multimem_rs_initialized = True
+        if not self.mnnvl_multimem_rs_supported:
+            return
+
+        assert torch_symm_mem is not None
+        buffer = None
+        signal_size = ops.meta_size()
+        try:
+            buffer = torch_symm_mem.empty(
+                signal_size + self.max_mnnvl_multimem_reduce_scatter_size,
+                dtype=torch.uint8,
+                device=self.device,
+            )
+        except RuntimeError as error:
+            logger.debug("MNNVL multimem RS allocation failed: %s", error)
+        if not _all_ranks_true(self.group, buffer is not None):
+            logger.warning_once(
+                "MNNVL multimem reduce-scatter symmetric-memory allocation "
+                "failed on at least one rank; falling back to NCCL.",
+                scope="global",
+            )
+            return
+        assert buffer is not None
+
+        handle = None
+        try:
+            handle = torch_symm_mem.rendezvous(buffer, self.group.group_name)
+            if handle is not None:
+                buffer[:signal_size].zero_()
+                torch.accelerator.synchronize()
+        except RuntimeError as error:
+            logger.debug("MNNVL multimem RS rendezvous failed: %s", error)
+        if not _all_ranks_true(
+            self.group,
+            handle is not None and bool(handle.multicast_ptr),
+        ):
+            logger.warning_once(
+                "MNNVL multimem reduce-scatter symmetric-memory rendezvous "
+                "failed on at least one rank; falling back to NCCL.",
+                scope="global",
+            )
+            return
+        assert handle is not None
+
+        self.mnnvl_multimem_rs_buffer = buffer
+        self.mnnvl_multimem_rs_handle = handle
+        self.mnnvl_multimem_rs_buffer_size = self.max_mnnvl_multimem_reduce_scatter_size
+        self.mnnvl_multimem_rs_local_ptr = buffer.data_ptr() + signal_size
+        self.mnnvl_multimem_rs_multicast_ptr = handle.multicast_ptr + signal_size
+
+    @contextmanager
+    def capture(self):
+        """The main responsibility of this context manager is the
+        `register_graph_buffers` call at the end of the context.
+        It records all the buffer addresses used in the CUDA graph.
+        """
+        try:
+            self._IS_CAPTURING = True
+            yield
+        finally:
+            self._IS_CAPTURING = False
+            if not self.disabled:
+                self.register_graph_buffers()
 
     def register_graph_buffers(self):
-        handle, offset = custom_ar.get_graph_buffer_ipc_meta(self._ptr)
-        handles, offsets = self._gather_ipc_meta((bytes(handle), offset))
-        logger.info("Registering %d cuda graph addresses", len(offset))
-        custom_ar.register_graph_buffers(self._ptr, handles, offsets)
+        if self.mnnvl_only:
+            # MNNVL collectives use pre-registered symmetric memory, not CUDA IPC.
+            return
+        handle, offset = ops.get_graph_buffer_ipc_meta(self._ptr)
+        logger.debug("Registering %d cuda graph addresses", len(offset))
+        # We cannot directly use `dist.all_gather_object` here
+        # because it is incompatible with `gloo` backend under inference mode.
+        # see https://github.com/pytorch/pytorch/issues/126032 for details.
+        all_data: list[list[list[int] | None]]
+        all_data = [[None, None] for _ in range(dist.get_world_size(group=self.group))]
+        all_data[self.rank] = [handle, offset]
+        ranks = sorted(dist.get_process_group_ranks(group=self.group))
+        for i, rank in enumerate(ranks):
+            dist.broadcast_object_list(
+                all_data[i], src=rank, group=self.group, device="cpu"
+            )
+        # Unpack list of tuples to tuple of lists.
+        handles = cast(list[list[int]], [d[0] for d in all_data])
+        offsets = cast(list[list[int]], [d[1] for d in all_data])
+        ops.register_graph_buffers(self._ptr, handles, offsets)
 
     def should_custom_ar(self, inp: torch.Tensor):
-        return custom_ar.should_custom_ar(inp, self.max_size, self.world_size,
-                                          self.full_nvlink)
+        if self.disabled or self.mnnvl_only or self.world_size > 8:
+            return False
+        if inp.dtype not in (torch.float32, torch.float16, torch.bfloat16):
+            return False
+        inp_size = inp.numel() * inp.element_size()
+        # custom allreduce requires input byte size to be multiples of 16
+        if inp_size % 16 != 0:
+            return False
+        if not is_weak_contiguous(inp):
+            return False
+        # for 4 or more non NVLink-capable GPUs, custom allreduce provides
+        # little performance improvement over NCCL.
+        if self.world_size == 2 or self.fully_connected:
+            return self.batch_invariant or inp_size < self.max_size
+        return False
 
-    # all reduce, assuming inp tensor is IPC registered with register_buffer,
-    # or, in the context of cuda graphs, register_graph_buffers
-    def all_reduce_reg(self, inp: torch.Tensor, out: torch.Tensor = None):
+    def all_reduce(
+        self, inp: torch.Tensor, *, out: torch.Tensor = None, registered: bool = False
+    ):
+        """Performs an out-of-place all reduce.
+
+        If registered is True, this assumes inp's pointer is already
+        IPC-registered. Otherwise, inp is first copied into a pre-registered
+        buffer.
+        """
         if out is None:
             out = torch.empty_like(inp)
-        custom_ar.all_reduce_reg(self._ptr, inp, out)
+        chunk_numel = self.max_size // inp.element_size()
+        if inp.numel() <= chunk_numel:
+            self._all_reduce_chunk(inp, out, registered)
+            return out
+        # Storage-order views: the gate only admits one contiguous block.
+        flat_inp = inp.as_strided((inp.numel(),), (1,), inp.storage_offset())
+        flat_out = out.as_strided((out.numel(),), (1,), out.storage_offset())
+        for start in range(0, flat_inp.numel(), chunk_numel):
+            end = start + chunk_numel
+            self._all_reduce_chunk(flat_inp[start:end], flat_out[start:end], registered)
         return out
 
-    # all reduce, assuming inp tensor is NOT IPC registered
-    def all_reduce_unreg(self, inp: torch.Tensor, out: torch.Tensor = None):
-        if out is None:
-            out = torch.empty_like(inp)
-        custom_ar.all_reduce_unreg(self._ptr, inp, self.buffer, out)
+    def _all_reduce_chunk(
+        self, inp: torch.Tensor, out: torch.Tensor, registered: bool
+    ) -> None:
+        if registered:
+            ops.all_reduce(self._ptr, inp, out, 0, 0)
+        else:
+            ops.all_reduce(
+                self._ptr, inp, out, self.buffer_ptrs[self.rank], self.max_size
+            )
+
+    def custom_all_reduce(self, input: torch.Tensor) -> torch.Tensor | None:
+        """The main allreduce API that provides support for cuda graph."""
+        # When custom allreduce is disabled, this will be None.
+        if self.disabled or not self.should_custom_ar(input):
+            return None
+        if self._IS_CAPTURING:
+            if torch.cuda.is_current_stream_capturing():
+                return self.all_reduce(input, registered=self._capture_registered)
+            else:
+                # If warm up, mimic the allocation pattern since custom
+                # allreduce is out-of-place.
+                return torch.empty_like(input)
+        else:
+            # Note: outside of cuda graph context, custom allreduce incurs a
+            # cost of cudaMemcpy, which should be small (<=1% of overall
+            # latency) compared to the performance gain of using custom kernels
+            return self.all_reduce(input, registered=False)
+
+    def should_custom_all_gather(self, inp: torch.Tensor) -> bool:
+        if self.disabled or not current_platform.is_cuda():
+            return False
+        if self.world_size == 16 and not self.mnnvl_only:
+            return False
+        inp_size = inp.nbytes
+        if inp.dtype not in (
+            torch.float32,
+            torch.float16,
+            torch.bfloat16,
+        ):
+            return False
+        max_size = (
+            self.max_mnnvl_all_gather_size
+            if self.mnnvl_multicast_ptr
+            else self.max_all_gather_size
+        )
+        return (
+            0 < inp_size <= max_size
+            and inp_size % 16 == 0
+            and is_weak_contiguous(inp)
+            and (self.fully_connected or bool(self.mnnvl_multicast_ptr))
+        )
+
+    def custom_all_gather(self, inp: torch.Tensor) -> torch.Tensor | None:
+        if not self.should_custom_all_gather(inp):
+            return None
+        out_shape = (inp.shape[0] * self.world_size,) + inp.shape[1:]
+        if self.mnnvl_multicast_ptr:
+            logger.info_once(
+                "Using the MNNVL Lamport all-gather kernel.",
+                scope="global",
+            )
+            out = torch.empty(out_shape, dtype=inp.dtype, device=inp.device)
+            ops.mnnvl_lamport_all_gather(
+                self._ptr,
+                inp,
+                out,
+                self.mnnvl_lamport_ag_local_ptr,
+                self.mnnvl_lamport_ag_multicast_ptr,
+                self.mnnvl_lamport_ag_epoch_ptr,
+                self.mnnvl_buffer_size,
+            )
+        else:
+            out = torch.empty(out_shape, dtype=inp.dtype, device=inp.device)
+            ops.custom_all_gather(
+                self._ptr,
+                inp,
+                out,
+                self.buffer_ptrs[self.rank],
+                self.max_all_gather_size,
+            )
+        return out
+
+    def _select_reduce_scatter_backend(
+        self, inp: torch.Tensor
+    ) -> _ReduceScatterBackend | None:
+        if self.disabled or not current_platform.is_cuda():
+            return None
+        # The size gates below would switch backends per batch.
+        if self.batch_invariant:
+            return None
+        if self.world_size == 16 and not self.mnnvl_only:
+            return None
+        inp_size = inp.nbytes
+        if inp.dtype not in (torch.float32, torch.float16, torch.bfloat16):
+            return None
+        if inp.shape[0] % self.world_size != 0:
+            return None
+        output_size = inp_size // self.world_size
+        if inp_size <= 0 or output_size % 16 != 0 or not is_weak_contiguous(inp):
+            return None
+
+        if self.mnnvl_multicast_ptr:
+            if inp_size <= self.max_mnnvl_reduce_scatter_size:
+                return "mnnvl_lamport"
+            if (
+                (
+                    self.mnnvl_multimem_rs_multicast_ptr
+                    or (
+                        self.mnnvl_multimem_rs_supported
+                        and not self.mnnvl_multimem_rs_initialized
+                    )
+                )
+                and not envs.VLLM_BATCH_INVARIANT
+                and inp_size <= self.max_mnnvl_multimem_reduce_scatter_size
+            ):
+                return "mnnvl_multimem"
+            return None
+
+        if self.fully_connected and inp_size <= self.max_reduce_scatter_size:
+            return "legacy"
+        return None
+
+    def should_custom_reduce_scatter(self, inp: torch.Tensor) -> bool:
+        return self._select_reduce_scatter_backend(inp) is not None
+
+    def should_mnnvl_multimem_reduce_scatter(self, inp: torch.Tensor) -> bool:
+        return self._select_reduce_scatter_backend(inp) == "mnnvl_multimem"
+
+    def custom_reduce_scatter(self, inp: torch.Tensor) -> torch.Tensor | None:
+        backend = self._select_reduce_scatter_backend(inp)
+        if backend is None:
+            return None
+        if backend == "mnnvl_multimem" and not self.mnnvl_multimem_rs_multicast_ptr:
+            if self._IS_CAPTURING:
+                return None
+            self._init_mnnvl_multimem_reduce_scatter_buffer()
+            if not self.mnnvl_multimem_rs_multicast_ptr:
+                return None
+
+        out_shape = (inp.shape[0] // self.world_size,) + inp.shape[1:]
+        out = torch.empty(out_shape, dtype=inp.dtype, device=inp.device)
+        if backend == "mnnvl_multimem":
+            logger.info_once(
+                "Using the low-SM MNNVL multimem reduce-scatter kernel.",
+                scope="global",
+            )
+            ops.mnnvl_multimem_reduce_scatter(
+                self._ptr,
+                inp,
+                out,
+                self.mnnvl_multimem_rs_local_ptr,
+                self.mnnvl_multimem_rs_multicast_ptr,
+                self.mnnvl_multimem_rs_buffer_size,
+                self._MNNVL_MULTIMEM_REDUCE_SCATTER_BLOCKS,
+            )
+        elif backend == "mnnvl_lamport":
+            logger.info_once(
+                "Using the MNNVL Lamport reduce-scatter kernel.",
+                scope="global",
+            )
+            ops.mnnvl_lamport_reduce_scatter(
+                self._ptr,
+                inp,
+                out,
+                self.mnnvl_lamport_rs_local_ptr,
+                self.mnnvl_lamport_rs_epoch_ptr,
+                self.mnnvl_buffer_size,
+            )
+        else:
+            ops.custom_reduce_scatter(
+                self._ptr,
+                inp,
+                out,
+                self.buffer_ptrs[self.rank],
+                self.max_reduce_scatter_size,
+            )
         return out
 
     def close(self):
-        if self._ptr:
-            custom_ar.dispose(self._ptr)
+        if not self.disabled and self._ptr:
+            if ops is not None:
+                ops.dispose(self._ptr)
             self._ptr = 0
+            self.free_shared_buffer(self.meta_ptrs, rank=self.rank)
+            self.free_shared_buffer(self.buffer_ptrs, rank=self.rank)
+            self.mnnvl_peer_buffers = None
+            self.mnnvl_handle = None
+            self.mnnvl_buffer = None
+            self.mnnvl_lamport_epochs = None
+            self.mnnvl_multimem_rs_handle = None
+            self.mnnvl_multimem_rs_buffer = None
 
     def __del__(self):
         self.close()
+
+    @staticmethod
+    def create_shared_buffer(
+        size_in_bytes: int,
+        group: ProcessGroup | None = None,
+        uncached: bool | None = False,
+    ) -> list[int]:
+        pointer, handle = ops.allocate_shared_buffer_and_handle(size_in_bytes)
+
+        world_size = dist.get_world_size(group=group)
+        rank = dist.get_rank(group=group)
+        handles = [None] * world_size
+        dist.all_gather_object(handles, handle, group=group)
+
+        pointers: list[int] = []
+        for i, h in enumerate(handles):
+            if i == rank:
+                pointers.append(pointer)  # type: ignore
+            else:
+                pointers.append(ops.open_mem_handle(h))
+        return pointers
+
+    @staticmethod
+    def free_shared_buffer(
+        pointers: list[int],
+        group: ProcessGroup | None = None,
+        rank: int | None = None,
+    ) -> None:
+        if rank is None:
+            rank = dist.get_rank(group=group)
+        if ops is not None:
+            ops.free_shared_buffer(pointers[rank])
